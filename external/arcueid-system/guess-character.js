@@ -151,6 +151,19 @@ function hintLine(state) {
   return randomPick(lines)
 }
 
+function sanitizeReply(text) {
+  return (text || '')
+    .toString()
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80)
+}
+
+function leaksTarget(reply, state) {
+  return state.target.keywords.some(keyword => keyword && reply.includes(keyword))
+}
+
 function isGameQuestion(text) {
   return /[？?]$/.test(text)
     || /[吗么呢]$/.test(text)
@@ -274,6 +287,44 @@ module.exports.apply = (ctx) => {
     return { answer: 'unknown', line: unsureLine(state) }
   }
 
+  async function generateGameReply(state, question, verdict) {
+    if (!DEEPSEEK_KEY) return null
+    if (verdict === 'guess') return null
+    try {
+      const res = await ctx.http.post(DEEPSEEK_URL, {
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: [
+              '你正在主持一个猜人物游戏。用户问问题，你只能根据裁判结果自然回应。',
+              '必须遵守：',
+              '1. 只表达裁判结果：yes=肯定，no=否定，unknown=不确定或问题太模糊。',
+              '2. 回复要像活人说话，但只能一句话，最多 32 个中文字符。',
+              '3. 绝对不能透露隐藏人物名字、别名、作品、时代、地域、阵营、职业、关系、典故、类别细节或任何额外线索。',
+              '4. 不要说“答案在这边”“很接近”“顺着线摸下去”这类暗示距离答案远近的话。',
+              '5. 不要主动给提示；用户要提示时会走单独流程。',
+              '6. 不要输出 JSON、括号说明或技术文本。'
+            ].join('\n')
+          },
+          {
+            role: 'user',
+            content: `用户问题：${question}\n裁判结果：${verdict}\n隐藏人物仅供你避免泄露：${state.target.name}`
+          }
+        ],
+        max_tokens: 60,
+        temperature: 0.8
+      }, {
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
+      })
+      const reply = sanitizeReply(res?.choices?.[0]?.message?.content)
+      if (reply && !leaksTarget(reply, state)) return reply
+    } catch (err) {
+      logger.warn('AI 回复生成失败，使用本地兜底：%s', err.message)
+    }
+    return null
+  }
+
   ctx.setInterval(clearExpired, 5 * 60 * 1000)
 
   function beginGame(session, category) {
@@ -374,15 +425,9 @@ module.exports.apply = (ctx) => {
       session.send(verdict.line)
       return
     }
-    const mood = state.questions <= 2
-      ? '你可以继续顺着这条线摸下去。'
-      : state.questions <= 5
-        ? '已经有点接近了，别急着跳结论。'
-        : '你这局问得很认真，我都开始替你捏一把汗了。'
 
-    let reply = `${verdict.line} ${mood}`
-    if (verdict.hint && state.questions >= 3) reply += ` ${verdict.hint}`
-
+    const reply = await generateGameReply(state, content, verdict.answer)
+      || verdict.line
     session.send(reply.trim())
     return
   }, true)
