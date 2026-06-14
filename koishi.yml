@@ -86,6 +86,17 @@ plugins:
     baseURL: https://api.coze.cn
   ~messages:3y7j0x: {}
   ~chat:390jrv: {}
+  ./split.js:k48026: {}
+  ./external/arcueid-system:4xb5af: {}
+  ./external/arcueid-system/audio.js:m4dcze: {}
+  ./external/arcueid-system/env-perception.js:rfwa95: {}
+  ./external/arcueid-system/arcueid-hearing.js:g2ejo5: {}
+  ./external/arcueid-system/arcueid-vector-rag.js:ly2dxy: {}
+  ./external/arcueid-system/web-search.js:7h9m3k: {}
+  ./external/arcueid-system/reminder.js:1qaiao: {}
+  ./external/arcueid-system/personal-assistant.js:8q2rpa: {}
+  ./external/arcueid-system/guess-character.js:r7mv4c: {}
+  ./external/arcueid-system/image-gen.js:3m5n6q: {}
   chatluna:6hh9ms:
     botNames:
       - 爱尔奎特
@@ -118,17 +129,6 @@ plugins:
       model: DeepSeek/deepseek-chat
     globalPrivateConfig:
       model: DeepSeek/deepseek-chat
-  ./split.js:k48026: {}
-  ./external/arcueid-system:4xb5af: {}
-  ./external/arcueid-system/audio.js:m4dcze: {}
-  ./external/arcueid-system/env-perception.js:rfwa95: {}
-  ./external/arcueid-system/arcueid-hearing.js:g2ejo5: {}
-  ./external/arcueid-system/arcueid-vector-rag.js:ly2dxy: {}
-  ./external/arcueid-system/web-search.js:7h9m3k: {}
-  ./external/arcueid-system/reminder.js:1qaiao: {}
-  ./external/arcueid-system/personal-assistant.js:8q2rpa: {}
-  ./external/arcueid-system/guess-character.js:r7mv4c: {}
-  ./external/arcueid-system/image-gen.js:3m5n6q: {}
   activelink:h42txt:
     scope:
       list:

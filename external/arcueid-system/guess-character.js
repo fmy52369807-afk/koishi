@@ -64,7 +64,6 @@ function normalize(text) {
   return (text || '')
     .toString()
     .replace(/<at[^>]*\/>/g, '')
-    .replace(/[？?]+$/g, '')
     .trim()
 }
 
@@ -150,6 +149,15 @@ function hintLine(state) {
     `别急，我松一点口风：${hint}`
   ]
   return randomPick(lines)
+}
+
+function isGameQuestion(text) {
+  return /[？?]$/.test(text)
+    || /[吗么呢]$/.test(text)
+    || /(是不是|是否|有没有|会不会|能不能|难道|莫非)/.test(text)
+    || /(跟|和|与).{1,12}(有关|有关系|相关|联系)/.test(text)
+    || /(属于|来自|出自|源自|代表|象征)/.test(text)
+    || /^(是|不是|他是|她是|它是|这位是|这个是|会是)/.test(text)
 }
 
 function evaluateQuestion(state, text) {
@@ -296,10 +304,7 @@ module.exports.apply = (ctx) => {
 
     if (content.length < 2) return next()
 
-    const isQuestion = /[？?]$/.test(content)
-      || /^(是|不是|有没有|会不会|能不能|是不是|他是|她是|它是|这位是|这个是|难道|莫非|会是)/.test(content)
-
-    if (!isQuestion) return next()
+    if (!isGameQuestion(content)) return next()
 
     state.questions += 1
     state.updatedAt = now()
