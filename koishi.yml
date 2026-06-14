@@ -1,0 +1,158 @@
+plugins:
+  group:server:
+    server:fohw21:
+      port: 5140
+      maxPort: 5149
+      host: ${{ env.KOISHI_HOST || '127.0.0.1' }}
+    server-satori:xhdufi: {}
+    server-temp:qwwxc7: {}
+  group:basic:
+    ~admin:smqhz6: {}
+    ~bind:lxbccm: {}
+    commands:hdmrje:
+      coze:
+        aliases:
+          爱尔: null
+    help:n58zfs: {}
+    http:ldxqp0: {}
+    ~inspect:ju0imt: {}
+    locales:kqxlpv: {}
+    proxy-agent:ulvqt2: {}
+    rate-limit:2xqxg5: {}
+    telemetry:2an7kr: {}
+  group:console:
+    actions:zdxxyh: {}
+    analytics:kcxd1a: {}
+    android:fm3vuo:
+      $if: env.KOISHI_AGENT?.includes('Android')
+    ~auth:5fm53t: {}
+    config:beh27y: {}
+    console:t5zk53:
+      open: ${{ env.KOISHI_CONSOLE_OPEN === 'true' }}
+    dataview:1l6ypu: {}
+    desktop:4p6y3c:
+      $if: env.KOISHI_AGENT?.includes('Desktop')
+    explorer:gd5eun: {}
+    logger:koi3td: {}
+    insight:fgucv0: {}
+    market:xaoe5l:
+      search:
+        endpoint: https://koi.nyan.zone/registry/index.json
+    notifier:gx5aeh: {}
+    oobe:qbr8st: {}
+    sandbox:3pxmy1: {}
+    status:10emqv: {}
+    theme-vanilla:nlv0m1: {}
+  group:storage:
+    ~database-mongo:ivz768:
+      database: koishi
+    ~database-mysql:cooiu9:
+      database: koishi
+    ~database-postgres:axbi1g:
+      database: koishi
+    database-sqlite:lfn2fw:
+      path: data/koishi2.db
+    assets-local:gleu6k: {}
+  group:adapter:
+    ~adapter-dingtalk:gs8z61: {}
+    ~adapter-discord:t0u3ff: {}
+    ~adapter-kook:tkk5s4: {}
+    ~adapter-lark:cnmdg6: {}
+    ~adapter-line:wefdoo: {}
+    ~adapter-mail:vwoy5e: {}
+    ~adapter-matrix:wg00vj: {}
+    ~adapter-qq:bt2yf8: {}
+    ~adapter-satori:jyl17w: {}
+    ~adapter-slack:2fngon: {}
+    ~adapter-telegram:3k2dav: {}
+    ~adapter-wechat-official:veaf57: {}
+    ~adapter-wecom:ree4ub: {}
+    ~adapter-whatsapp:sjh49a: {}
+    ~adapter-zulip:l5c9zw: {}
+  group:develop:
+    $if: env.NODE_ENV === 'development'
+    hmr:6oxwoj:
+      root: .
+      ignored:
+        - data/**
+        - temp/**
+        - cache/**
+        - logs/**
+  adapter-onebot:14bj0o:
+    selfId: '477001086'
+  ~coze:uw2jsg:
+    bot_id: '7629948817802231844'
+    token: ${{ env.COZE_TOKEN }}
+    baseURL: https://api.coze.cn
+  ~messages:3y7j0x: {}
+  ~chat:390jrv: {}
+  chatluna:6hh9ms:
+    botNames:
+      - 爱尔奎特
+      - null
+    defaultModel: DeepSeek/deepseek-chat
+    defaultChatMode: chat
+    defaultEmbeddings: DeepSeek
+    defaultVectorStore: memory
+    defaultPreset: 爱尔奎特
+    allowQuoteReply: true
+    infiniteContext: true
+    isLog: true
+  chatluna-openai-like-adapter:7u5fjx:
+    platform: DeepSeek
+    apiKeys:
+      - - ${{ env.DEEPSEEK_API_KEY }}
+        - https://api.deepseek.com/v1
+    pullModels: false
+    maxContextRatio: 1
+    additionalModels:
+      - model: deepseek-chat
+        contextSize: 128000
+        modelCapabilities:
+          - tool_call
+  ~chatluna-character:u0qenu:
+    applyPrivate:
+      - null
+    globalGroupConfig:
+      image: true
+      model: DeepSeek/deepseek-chat
+    globalPrivateConfig:
+      model: DeepSeek/deepseek-chat
+  ./split.js:k48026: {}
+  ./external/arcueid-system:4xb5af: {}
+  ./external/arcueid-system/audio.js:m4dcze: {}
+  ./external/arcueid-system/env-perception.js:rfwa95: {}
+  ./external/arcueid-system/arcueid-hearing.js:g2ejo5: {}
+  ./external/arcueid-system/arcueid-vector-rag.js:ly2dxy: {}
+  ./external/arcueid-system/web-search.js:7h9m3k: {}
+  ./external/arcueid-system/reminder.js:1qaiao: {}
+  ./external/arcueid-system/personal-assistant.js:8q2rpa: {}
+  ./external/arcueid-system/guess-character.js:r7mv4c: {}
+  ./external/arcueid-system/image-gen.js:3m5n6q: {}
+  activelink:h42txt:
+    scope:
+      list:
+        - type: 群聊
+          id: '859480681'
+        - type: 私聊
+          id: '1600596013'
+        - type: 私聊
+          id: '2932083229'
+    proactive:
+      enabled: true
+      prompts:
+        - 根据群里之前的聊天氛围主动发起一个话题。你可以表现出无聊想去探险，或者对现代事物感到好奇
+      initialProbability: 0.2
+      checkInterval: 10
+      initialDelay: 1
+    activityIdle:
+      enabled: true
+      applyDefaultGroupConfigs:
+        - '859480681'
+      applyDefaultPrivateConfigs:
+        - '2932083229'
+        - '1600596013'
+    festival:
+      enabled: false
+prefix:
+  - /
