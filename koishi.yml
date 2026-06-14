@@ -79,9 +79,9 @@ plugins:
         - cache/**
         - logs/**
   adapter-onebot:14bj0o:
-    selfId: '477001086'
+    selfId: ${{ env.KOISHI_ONEBOT_SELF_ID }}
   ~coze:uw2jsg:
-    bot_id: '7629948817802231844'
+    bot_id: ${{ env.COZE_BOT_ID }}
     token: ${{ env.COZE_TOKEN }}
     baseURL: https://api.coze.cn
   ~messages:3y7j0x: {}
@@ -133,11 +133,11 @@ plugins:
     scope:
       list:
         - type: 群聊
-          id: '859480681'
+          id: ${{ env.ACTIVELINK_GROUP_ID_1 }}
         - type: 私聊
-          id: '1600596013'
+          id: ${{ env.ACTIVELINK_PRIVATE_ID_1 }}
         - type: 私聊
-          id: '2932083229'
+          id: ${{ env.ACTIVELINK_PRIVATE_ID_2 }}
     proactive:
       enabled: true
       prompts:
@@ -148,10 +148,10 @@ plugins:
     activityIdle:
       enabled: true
       applyDefaultGroupConfigs:
-        - '859480681'
+        - ${{ env.ACTIVELINK_GROUP_ID_1 }}
       applyDefaultPrivateConfigs:
-        - '2932083229'
-        - '1600596013'
+        - ${{ env.ACTIVELINK_PRIVATE_ID_2 }}
+        - ${{ env.ACTIVELINK_PRIVATE_ID_1 }}
     festival:
       enabled: false
 prefix:
