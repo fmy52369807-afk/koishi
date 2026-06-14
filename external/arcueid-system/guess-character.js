@@ -160,6 +160,14 @@ function isGameQuestion(text) {
     || /^(是|不是|他是|她是|它是|这位是|这个是|会是)/.test(text)
 }
 
+function fallbackIntent(text) {
+  const t = text.toLowerCase()
+  if (t.includes('提示') || t.includes('线索') || t.includes('hint')) return { intent: 'hint' }
+  if (/(放弃|结束|不猜了|认输|算了)/.test(text)) return { intent: 'giveup' }
+  if (isGameQuestion(text)) return { intent: 'question' }
+  return { intent: 'chat' }
+}
+
 function evaluateQuestion(state, text) {
   const target = state.target
   const t = text.toLowerCase()
@@ -215,6 +223,48 @@ module.exports.apply = (ctx) => {
       logger.warn('AI 判定失败，使用本地兜底：%s', err.message)
     }
     return null
+  }
+
+  async function analyzeGameInput(state, content) {
+    if (!DEEPSEEK_KEY) return fallbackIntent(content)
+    try {
+      const res = await ctx.http.post(DEEPSEEK_URL, {
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: [
+              '你是猜人物游戏的路由裁判。机器人心里藏着一个隐藏人物，用户可能在提问、索要提示、放弃、或只是闲聊。',
+              '你的任务有两步：',
+              '1. 判断用户这句话在当前游戏中属于 intent：question、hint、giveup、chat。',
+              'question 包括任何自然问法、间接问法、属性判断、关系判断、类别判断、直接猜人物名。chat 是和猜人物判定无关的普通聊天或吐槽。',
+              '2. 如果 intent 是 question，再判断隐藏人物对应答案 verdict：yes、no、unknown、guess。直接猜中隐藏人物或明显别名时 verdict 为 guess。',
+              '只返回 JSON，不要解释。格式：{"intent":"question|hint|giveup|chat","verdict":"yes|no|unknown|guess|null"}'
+            ].join('\n')
+          },
+          {
+            role: 'user',
+            content: `隐藏人物：${state.target.name}\n类别：${state.category}\n可识别别名：${state.target.keywords.join('、')}\n用户消息：${content}`
+          }
+        ],
+        max_tokens: 80,
+        temperature: 0
+      }, {
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
+      })
+      const text = res?.choices?.[0]?.message?.content?.trim() || ''
+      const match = text.match(/\{[\s\S]*\}/)
+      if (!match) return fallbackIntent(content)
+      const parsed = JSON.parse(match[0])
+      if (!['question', 'hint', 'giveup', 'chat'].includes(parsed.intent)) return fallbackIntent(content)
+      if (parsed.intent === 'question' && !['yes', 'no', 'unknown', 'guess'].includes(parsed.verdict)) {
+        return { intent: 'question', verdict: null }
+      }
+      return { intent: parsed.intent, verdict: parsed.verdict || null }
+    } catch (err) {
+      logger.warn('AI 意图识别失败，使用本地兜底：%s', err.message)
+      return fallbackIntent(content)
+    }
   }
 
   function verdictToReply(state, verdict) {
@@ -297,19 +347,26 @@ module.exports.apply = (ctx) => {
     const state = getState(session)
     if (!state) return next()
 
-    if (/(猜人物|问答|提问|提示|线索|答案)/.test(content) && !/[吗么呢？?]/.test(content)) {
-      // 游戏内的普通描述，不强行拦截
-      return next()
-    }
-
     if (content.length < 2) return next()
 
-    if (!isGameQuestion(content)) return next()
+    const analysis = await analyzeGameInput(state, content)
+    if (analysis.intent === 'chat') return next()
+    if (analysis.intent === 'hint') {
+      state.updatedAt = now()
+      await session.send(`🔎 ${hintLine(state)}`)
+      return
+    }
+    if (analysis.intent === 'giveup') {
+      states.delete(roomKey(session))
+      await session.send(`好吧，这一局先收起来。答案是「${state.target.name}」。`)
+      return
+    }
+    if (analysis.intent !== 'question') return next()
 
     state.questions += 1
     state.updatedAt = now()
 
-    const aiVerdict = await judgeWithAi(state, content)
+    const aiVerdict = analysis.verdict || await judgeWithAi(state, content)
     const verdict = aiVerdict ? verdictToReply(state, aiVerdict) : evaluateQuestion(state, content)
 
     if (verdict.answer === 'guess') {
