@@ -107,36 +107,36 @@ function categoryNames() {
 
 function introLine(state) {
   const openers = [
-    '我已经在心里藏好一个人了。你可以开始问我。',
-    '人物已经选定。来试着把他、她或它问出来吧。',
-    '我想好了。现在轮到你来拆线索了。'
+    '我已经把一个人藏好了。来吧，试着问出来。',
+    '人物已经选定。轮到你来把他/她/它猜出来了。',
+    '嗯，谜底已经放进去了。你可以开始问我。'
   ]
   return `${randomPick(openers)}`
 }
 
 function yesLine(state) {
   const lines = [
-    '嗯，是的，这条线你摸对了。',
-    '对，答案在这边，继续往前走。',
-    '是哦，你问到点子上了。'
+    '嗯，是的。你这一下问对了。',
+    '对。这个方向成立。',
+    '是哦，继续保持这个感觉。'
   ]
   return randomPick(lines)
 }
 
 function noLine(state) {
   const lines = [
-    '不是，这条路不通，别让它把你带偏了。',
-    '不对，不过你已经很接近谜面边缘了。',
-    '否定啦。再换个方向试试。'
+    '不是。这个方向先放一边。',
+    '不对，换个问法吧。',
+    '否定。你再试试别的角度。'
   ]
   return randomPick(lines)
 }
 
 function unsureLine(state) {
   const lines = [
-    '这个我不能老实点头，太模糊了。',
-    '唔，这个问题问得有点飘，我只能给你一个不太确定的答案。',
-    '我现在没法干脆地下结论，换个问法吧。'
+    '这个问法太飘了，我没法直接点头。',
+    '唔，这题有点松，得再具体一点。',
+    '我现在不能干脆下结论。'
   ]
   return randomPick(lines)
 }
@@ -157,11 +157,17 @@ function sanitizeReply(text) {
     .replace(/[\r\n]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 80)
+    .slice(0, 120)
 }
 
 function leaksTarget(reply, state) {
-  return state.target.keywords.some(keyword => keyword && reply.includes(keyword))
+  const deny = [state.target.name, ...state.target.keywords].filter(Boolean)
+  return deny.some(keyword => reply.includes(keyword))
+}
+
+function rememberReply(state, reply) {
+  state.recentReplies = [...(state.recentReplies || []), reply].slice(-5)
+  return reply
 }
 
 function isGameQuestion(text) {
@@ -297,23 +303,29 @@ module.exports.apply = (ctx) => {
           {
             role: 'system',
             content: [
-              '你正在主持一个猜人物游戏。用户问问题，你只能根据裁判结果自然回应。',
+              '你正在主持一个猜人物游戏，要像爱尔奎特那样说话，带一点俏皮、任性和轻微的动作感，但不要夸张。',
               '必须遵守：',
-              '1. 只表达裁判结果：yes=肯定，no=否定，unknown=不确定或问题太模糊。',
-              '2. 回复要像活人说话，但只能一句话，最多 32 个中文字符。',
-              '3. 绝对不能透露隐藏人物名字、别名、作品、时代、地域、阵营、职业、关系、典故、类别细节或任何额外线索。',
-              '4. 不要说“答案在这边”“很接近”“顺着线摸下去”这类暗示距离答案远近的话。',
-              '5. 不要主动给提示；用户要提示时会走单独流程。',
-              '6. 不要输出 JSON、括号说明或技术文本。'
+              '1. 只能根据裁判结果回复，不要自行补充事实。',
+              '2. 可以是 1 到 2 句自然中文，保持短，但不要死板；可以带轻微语气词或动作描写。',
+              '3. yes 就明确肯定，no 就明确否定，unknown 就明确说不确定或问题太模糊。',
+              '4. 绝对不能透露隐藏人物名字、别名、作品、时代、地域、阵营、职业、关系、典故、类别细节或任何额外线索。',
+              '5. 不要说“答案在这边”“很接近”“顺着线摸下去”这类暗示距离答案远近的话。',
+              '6. 不要主动给提示；用户要提示时会走单独流程。',
+              '7. 不要输出 JSON、括号说明或技术文本。'
             ].join('\n')
           },
           {
             role: 'user',
-            content: `用户问题：${question}\n裁判结果：${verdict}\n隐藏人物仅供你避免泄露：${state.target.name}`
+            content: [
+              `用户问题：${question}`,
+              `裁判结果：${verdict}`,
+              `最近几次你的游戏回复：${(state.recentReplies || []).join(' / ') || '无'}`,
+              '请只生成自然回复，并避免和最近回复使用相同句式。'
+            ].join('\n')
           }
         ],
         max_tokens: 60,
-        temperature: 0.8
+        temperature: 0.9
       }, {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
       })
@@ -334,7 +346,8 @@ module.exports.apply = (ctx) => {
       category: target.category,
       questions: 0,
       startedAt: now(),
-      updatedAt: now()
+      updatedAt: now(),
+      recentReplies: []
     }
     states.set(roomKey(session), state)
     return state
@@ -428,7 +441,7 @@ module.exports.apply = (ctx) => {
 
     const reply = await generateGameReply(state, content, verdict.answer)
       || verdict.line
-    session.send(reply.trim())
+    session.send(rememberReply(state, reply.trim()))
     return
   }, true)
 
