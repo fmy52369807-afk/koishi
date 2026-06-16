@@ -41,7 +41,7 @@ const POOLS = {
     { name: '宙斯', keywords: ['宙斯', '奥林匹斯', '希腊神话'] },
     { name: '雅典娜', keywords: ['雅典娜', '智慧女神'] },
     { name: '奥丁', keywords: ['奥丁', '北欧神话', '独眼'] },
-    { name: '索尔', keywords: ['索尔', '雷神', '北欧神话'] },
+    { name: '索尔', keywords: ['索尔', '托尔', 'Thor', '雷神', '北欧神话'] },
     { name: '洛基', keywords: ['洛基', '北欧神话', '诡计之神'] },
     { name: '哪吒', keywords: ['哪吒', '三坛海会大神'] },
     { name: '孙悟空', keywords: ['孙悟空', '齐天大圣', '西游记'] },
@@ -151,23 +151,36 @@ function hintLine(state) {
   return randomPick(lines)
 }
 
-function sanitizeReply(text) {
-  return (text || '')
-    .toString()
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120)
+function buildChatLunaGameInstruction(state, question, verdict) {
+  const verdictText = {
+    yes: '是',
+    no: '不是',
+    unknown: '无法确定，问题太模糊'
+  }[verdict] || '无法确定，问题太模糊'
+
+  return [
+    `[norender][系统指令：志贵正在和你玩「猜人物」。`,
+    `志贵刚才问：「${question}」`,
+    `游戏裁判已经判定：${verdictText}。`,
+    '请完全保持你当前的爱尔奎特人设和聊天口吻，像真的在陪志贵玩一样自然回应。',
+    '你可以撒娇、得意、吐槽、逗他，也可以顺着他刚才的问法做一点反应。',
+    '但不要把自己说成裁判/主持人/系统，不要输出规则解释，不要输出技术格式。',
+    '不要主动给新线索，不要暗示距离答案远近；只能确认或否定志贵已经问出来的内容。',
+    '如果裁判结果是“无法确定”，就用你的口吻让志贵换个更具体的问法。',
+    `这局已问 ${state.questions} 次。]`
+  ].join('\n')
 }
 
-function leaksTarget(reply, state) {
-  const deny = [state.target.name, ...state.target.keywords].filter(Boolean)
-  return deny.some(keyword => reply.includes(keyword))
-}
-
-function rememberReply(state, reply) {
-  state.recentReplies = [...(state.recentReplies || []), reply].slice(-5)
-  return reply
+function buildChatLunaGuessSuccessInstruction(state, guess) {
+  return [
+    `[norender][系统指令：志贵正在和你玩「猜人物」。`,
+    `志贵刚才猜：「${guess}」`,
+    `他猜中了，谜底就是「${state.target.name}」。`,
+    '请完全保持你当前的爱尔奎特人设和聊天口吻，自然回应他猜中了。',
+    '可以开心、惊讶、不服气、撒娇或调侃他，但不要像系统公告。',
+    '可以说出谜底，因为这一局已经结束了。',
+    '不要输出 JSON、标签、系统说明。]'
+  ].join('\n')
 }
 
 function isGameQuestion(text) {
@@ -293,50 +306,6 @@ module.exports.apply = (ctx) => {
     return { answer: 'unknown', line: unsureLine(state) }
   }
 
-  async function generateGameReply(state, question, verdict) {
-    if (!DEEPSEEK_KEY) return null
-    if (verdict === 'guess') return null
-    try {
-      const res = await ctx.http.post(DEEPSEEK_URL, {
-        model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: [
-              '你正在主持一个猜人物游戏，要像爱尔奎特那样说话，带一点俏皮、任性和轻微的动作感，但不要夸张。',
-              '必须遵守：',
-              '1. 只能根据裁判结果回复，不要自行补充事实。',
-              '2. 可以是 1 到 2 句自然中文，保持短，但不要死板；可以带轻微语气词或动作描写。',
-              '3. yes 就明确肯定，no 就明确否定，unknown 就明确说不确定或问题太模糊。',
-              '4. 绝对不能透露隐藏人物名字、别名、作品、时代、地域、阵营、职业、关系、典故、类别细节或任何额外线索。',
-              '5. 不要说“答案在这边”“很接近”“顺着线摸下去”这类暗示距离答案远近的话。',
-              '6. 不要主动给提示；用户要提示时会走单独流程。',
-              '7. 不要输出 JSON、括号说明或技术文本。'
-            ].join('\n')
-          },
-          {
-            role: 'user',
-            content: [
-              `用户问题：${question}`,
-              `裁判结果：${verdict}`,
-              `最近几次你的游戏回复：${(state.recentReplies || []).join(' / ') || '无'}`,
-              '请只生成自然回复，并避免和最近回复使用相同句式。'
-            ].join('\n')
-          }
-        ],
-        max_tokens: 60,
-        temperature: 0.9
-      }, {
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
-      })
-      const reply = sanitizeReply(res?.choices?.[0]?.message?.content)
-      if (reply && !leaksTarget(reply, state)) return reply
-    } catch (err) {
-      logger.warn('AI 回复生成失败，使用本地兜底：%s', err.message)
-    }
-    return null
-  }
-
   ctx.setInterval(clearExpired, 5 * 60 * 1000)
 
   function beginGame(session, category) {
@@ -346,8 +315,7 @@ module.exports.apply = (ctx) => {
       category: target.category,
       questions: 0,
       startedAt: now(),
-      updatedAt: now(),
-      recentReplies: []
+      updatedAt: now()
     }
     states.set(roomKey(session), state)
     return state
@@ -435,14 +403,12 @@ module.exports.apply = (ctx) => {
 
     if (verdict.answer === 'guess') {
       states.delete(roomKey(session))
-      session.send(verdict.line)
-      return
+      session.content = buildChatLunaGuessSuccessInstruction(state, content)
+      return next()
     }
 
-    const reply = await generateGameReply(state, content, verdict.answer)
-      || verdict.line
-    session.send(rememberReply(state, reply.trim()))
-    return
+    session.content = buildChatLunaGameInstruction(state, content, verdict.answer)
+    return next()
   }, true)
 
   logger.info('人物猜谜就绪')
