@@ -52,7 +52,6 @@ const POOLS = {
 }
 
 const ALL = Object.entries(POOLS).flatMap(([category, list]) => list.map(item => ({ ...item, category })))
-const GAME_PREFIX = '猜人物'
 const TTL = 20 * 60 * 1000
 const states = new Map()
 
@@ -64,12 +63,6 @@ function normalize(text) {
   return (text || '')
     .toString()
     .replace(/<at[^>]*\/>/g, '')
-    .trim()
-}
-
-function stripCommandPrefix(text) {
-  return normalize(text)
-    .replace(/^[\/!！]\s*/, '')
     .trim()
 }
 
@@ -101,59 +94,21 @@ function pickPool(category) {
   return randomPick(POOLS[category] || ALL)
 }
 
-function categoryNames() {
-  return Object.keys(POOLS).join('、')
-}
-
-function introLine(state) {
-  const openers = [
-    '我已经把一个人藏好了。来吧，试着问出来。',
-    '人物已经选定。轮到你来把他/她/它猜出来了。',
-    '嗯，谜底已经放进去了。你可以开始问我。'
-  ]
-  return `${randomPick(openers)}`
-}
-
-function yesLine(state) {
-  const lines = [
-    '嗯，是的。你这一下问对了。',
-    '对。这个方向成立。',
-    '是哦，继续保持这个感觉。'
-  ]
-  return randomPick(lines)
-}
-
-function noLine(state) {
-  const lines = [
-    '不是。这个方向先放一边。',
-    '不对，换个问法吧。',
-    '否定。你再试试别的角度。'
-  ]
-  return randomPick(lines)
-}
-
-function unsureLine(state) {
-  const lines = [
-    '这个问法太飘了，我没法直接点头。',
-    '唔，这题有点松，得再具体一点。',
-    '我现在不能干脆下结论。'
-  ]
-  return randomPick(lines)
-}
-
-function hintLine(state) {
-  const hint = state.target.hint || `我想的人物属于「${state.category}」。`
-  const lines = [
-    `我可以再放一点风声：${hint}`,
-    `给你一条小线索：${hint}`,
-    `别急，我松一点口风：${hint}`
-  ]
-  return randomPick(lines)
-}
-
 function isNaturalStart(text) {
   return /(玩|来|开|开始|继续).{0,8}(猜人物|人物猜谜|猜角色)/.test(text)
     || /(猜人物|人物猜谜|猜角色).{0,8}(玩|来|开|开始)/.test(text)
+}
+
+function inferCategory(text) {
+  for (const category of Object.keys(POOLS)) {
+    if (text.includes(category)) return category
+  }
+
+  if (/(历史|古代|现实人物|真人)/.test(text)) return '历史人物'
+  if (/(动漫|动画|漫画|二次元|番剧|角色)/.test(text)) return '动漫人物'
+  if (/(游戏|电竞|主机|手游|端游)/.test(text)) return '游戏人物'
+  if (/(神话|传说|神仙|神明)/.test(text)) return '神话人物'
+  return '随机'
 }
 
 function buildChatLunaGameInstruction(state, question, verdict) {
@@ -236,19 +191,19 @@ function evaluateQuestion(state, text) {
   const yes = fuzzyHit(text, target.keywords)
   const patternNo = /是不是|是否|会不会|能不能|有没有|他\/她\/它|男性|女性|人类|虚构|现实|历史|动漫|游戏|神话|中国|日本|欧洲|古代|现代|真名|别名/.test(text)
 
-  if (yes) return { answer: 'yes', line: yesLine(state), hint: hintLine(state) }
+  if (yes) return { answer: 'yes' }
 
   if (t.includes('提示') || t.includes('线索') || t.includes('hint')) {
-    return { answer: 'hint', line: hintLine(state) }
+    return { answer: 'hint' }
   }
 
   if (/是谁|什么人|哪个|哪位|是哪一个/.test(text)) {
-    return { answer: 'maybe', line: unsureLine(state), hint: hintLine(state) }
+    return { answer: 'unknown' }
   }
 
-  if (patternNo) return { answer: 'no', line: noLine(state), hint: state.questions >= 4 ? hintLine(state) : '' }
+  if (patternNo) return { answer: 'no' }
 
-  return { answer: 'unknown', line: unsureLine(state) }
+  return { answer: 'unknown' }
 }
 
 module.exports.apply = (ctx) => {
@@ -330,10 +285,10 @@ module.exports.apply = (ctx) => {
   }
 
   function verdictToReply(state, verdict) {
-    if (verdict === 'yes') return { answer: 'yes', line: yesLine(state), hint: hintLine(state) }
-    if (verdict === 'no') return { answer: 'no', line: noLine(state), hint: state.questions >= 4 ? hintLine(state) : '' }
-    if (verdict === 'guess') return { answer: 'guess', line: `答对了，就是「${state.target.name}」。哼，居然被你抓到了。` }
-    return { answer: 'unknown', line: unsureLine(state) }
+    if (verdict === 'yes') return { answer: 'yes' }
+    if (verdict === 'no') return { answer: 'no' }
+    if (verdict === 'guess') return { answer: 'guess' }
+    return { answer: 'unknown' }
   }
 
   ctx.setInterval(clearExpired, 5 * 60 * 1000)
@@ -356,69 +311,15 @@ module.exports.apply = (ctx) => {
     session.content = buildChatLunaStartInstruction(next)
   }
 
-  async function handleGameCommand(session, action, args) {
-    const state = getState(session)
-
-    if (!action) {
-      await startGameThroughPersona(session, '随机')
-      return
-    }
-
-    if (action === '帮助' || action === 'help') {
-      await session.send(`🎭 猜人物：\n/猜人物 开始 [随机|${categoryNames()}]\n/猜人物 提示\n/猜人物 放弃\n/猜人物 结束\n\n开始后直接提问也可以，比如：\n“他是历史人物吗？”`)
-      return
-    }
-
-    if (action === '开始' || action === 'start' || action === 'new') {
-      const category = args && POOLS[args.trim()] ? args.trim() : '随机'
-      await startGameThroughPersona(session, category)
-      return
-    }
-
-    if (action === '提示' || action === 'hint') {
-      if (!state) return session.send('还没有正在进行的局。先用 /猜人物 开始 开一局。')
-      state.updatedAt = now()
-      session.content = buildChatLunaHintInstruction(state)
-      return
-    }
-
-    if (action === '放弃' || action === '结束' || action === 'stop' || action === 'end') {
-      if (!state) return session.send('现在没有在玩的局。')
-      states.delete(roomKey(session))
-      await session.send(`好吧，这一局先收起来。答案是「${state.target.name}」。`)
-      return
-    }
-
-    if (action === '类别' || action === 'category') {
-      await session.send(`可选类别：${categoryNames()}。也可以直接用 /猜人物 开始 随机。`)
-      return
-    }
-
-    await session.send('输入 /猜人物 帮助 看规则。')
-  }
-
-  ctx.command('猜人物 [action] [args:text]', '一个回答是/不是的人物猜谜游戏')
-    .action(async ({ session }, action, args) => {
-      await handleGameCommand(session, action, args)
-    })
-
   ctx.middleware(async (session, next) => {
     let content = normalize(session.content)
     if (!content || content.includes('[norender]')) return next()
-
-    const commandText = stripCommandPrefix(content)
-    if (commandText === GAME_PREFIX || commandText.startsWith(`${GAME_PREFIX} `)) {
-      const rest = commandText.slice(GAME_PREFIX.length).trim()
-      const match = rest.match(/^(\S+)(?:\s+([\s\S]+))?$/)
-      await handleGameCommand(session, match?.[1], match?.[2])
-      return session.content?.includes('[norender]') ? next() : undefined
-    }
 
     if (content.startsWith('/')) return next()
 
     const state = getState(session)
     if (!state && isNaturalStart(content)) {
-      await startGameThroughPersona(session, '随机')
+      await startGameThroughPersona(session, inferCategory(content))
       return next()
     }
 
