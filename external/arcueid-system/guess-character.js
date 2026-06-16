@@ -111,6 +111,15 @@ function inferCategory(text) {
   return '随机'
 }
 
+function buildGameFacts(state) {
+  const facts = [
+    `谜底是「${state.target.name}」`,
+    `大类是「${state.category}」`
+  ]
+  if (state.target.hint) facts.push(`背景锚点是「${state.target.hint}」`)
+  return facts.join('；')
+}
+
 function buildChatLunaGameInstruction(state, question, verdict) {
   const verdictText = {
     yes: '是',
@@ -122,12 +131,14 @@ function buildChatLunaGameInstruction(state, question, verdict) {
     `[norender][系统指令：志贵正在和你玩「猜人物」。`,
     `志贵刚才问：「${question}」`,
     `游戏裁判已经判定：${verdictText}。`,
-    `内部游戏事实：谜底属于「${state.category}」，但除非志贵明确问到类别，否则不要主动说出类别。`,
+    `内部游戏事实：${buildGameFacts(state)}。`,
     '请完全保持你当前的爱尔奎特人设和聊天口吻，像聊天时随口陪志贵玩一样回应。',
     '回复重点只放在这一次判定本身，默认一句话；除非特别顺口，最多两句很短的话。',
     '语气可以撒娇、得意、吐槽、逗他，但要像自然对话，不要像主持人在点评进度。',
     '但不要把自己说成裁判/主持人/系统，不要输出规则解释，不要输出技术格式。',
     '不要主动给新线索，不要暗示距离答案远近；只能确认或否定志贵已经问出来的内容。',
+    '如果志贵直接问到类别、时代、作品、阵营或出处，你可以直接承认，不要装作忘了。',
+    '如果内部游戏事实里有更具体的背景锚点，就把它当成谜底的一部分，不要丢掉，也不要改写成泛泛的大类。',
     '不要追加“换个角度/换个思路/方向偏了/继续猜/再试试看/快猜到了/离得远”这类指导或进度评价。',
     '如果已经回答了“是/不是”，就不要再补一整句建议；可以只说“不是哦”“嗯，是呢”这种短回应。',
     '不要改口，不要编造和内部游戏事实冲突的类别、时代、作品或身份。',
@@ -140,7 +151,7 @@ function buildChatLunaStartInstruction(state) {
   return [
     `[norender][系统指令：志贵想和你玩「猜人物」。`,
     `你已经在心里想好了一个隐藏人物：${state.target.name}。`,
-    `内部游戏事实：谜底属于「${state.category}」。`,
+    `内部游戏事实：${buildGameFacts(state)}。`,
     '请完全保持你当前的爱尔奎特人设和聊天口吻，自然告诉志贵你想好了，让他开始问。',
     '不要说自己是功能、插件、主持人或系统。',
     '不要主动说出谜底、类别或提示。',
@@ -151,7 +162,7 @@ function buildChatLunaStartInstruction(state) {
 function buildChatLunaHintInstruction(state) {
   return [
     `[norender][系统指令：志贵正在和你玩「猜人物」，现在他向你要提示。`,
-    `隐藏人物：${state.target.name}`,
+    `内部游戏事实：${buildGameFacts(state)}。`,
     `提示内容：${state.target.hint || `这个人物属于「${state.category}」。`}`,
     '请完全保持你当前的爱尔奎特人设和聊天口吻，自然给出这一条提示。',
     '只给这一条提示，不要额外透露谜底、别名或更多信息。',
@@ -163,6 +174,7 @@ function buildChatLunaGuessSuccessInstruction(state, guess) {
   return [
     `[norender][系统指令：志贵正在和你玩「猜人物」。`,
     `志贵刚才猜：「${guess}」`,
+    `内部游戏事实：${buildGameFacts(state)}。`,
     `他猜中了，谜底就是「${state.target.name}」。`,
     '请完全保持你当前的爱尔奎特人设和聊天口吻，自然回应他猜中了。',
     '可以开心、惊讶、不服气、撒娇或调侃他，但不要像系统公告。',
