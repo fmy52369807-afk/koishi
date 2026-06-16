@@ -151,6 +151,11 @@ function hintLine(state) {
   return randomPick(lines)
 }
 
+function isNaturalStart(text) {
+  return /(玩|来|开|开始|继续).{0,8}(猜人物|人物猜谜|猜角色)/.test(text)
+    || /(猜人物|人物猜谜|猜角色).{0,8}(玩|来|开|开始)/.test(text)
+}
+
 function buildChatLunaGameInstruction(state, question, verdict) {
   const verdictText = {
     yes: '是',
@@ -162,12 +167,37 @@ function buildChatLunaGameInstruction(state, question, verdict) {
     `[norender][系统指令：志贵正在和你玩「猜人物」。`,
     `志贵刚才问：「${question}」`,
     `游戏裁判已经判定：${verdictText}。`,
+    `内部游戏事实：谜底属于「${state.category}」，但除非志贵明确问到类别，否则不要主动说出类别。`,
     '请完全保持你当前的爱尔奎特人设和聊天口吻，像真的在陪志贵玩一样自然回应。',
     '你可以撒娇、得意、吐槽、逗他，也可以顺着他刚才的问法做一点反应。',
     '但不要把自己说成裁判/主持人/系统，不要输出规则解释，不要输出技术格式。',
     '不要主动给新线索，不要暗示距离答案远近；只能确认或否定志贵已经问出来的内容。',
+    '不要改口，不要编造和内部游戏事实冲突的类别、时代、作品或身份。',
     '如果裁判结果是“无法确定”，就用你的口吻让志贵换个更具体的问法。',
     `这局已问 ${state.questions} 次。]`
+  ].join('\n')
+}
+
+function buildChatLunaStartInstruction(state) {
+  return [
+    `[norender][系统指令：志贵想和你玩「猜人物」。`,
+    `你已经在心里想好了一个隐藏人物：${state.target.name}。`,
+    `内部游戏事实：谜底属于「${state.category}」。`,
+    '请完全保持你当前的爱尔奎特人设和聊天口吻，自然告诉志贵你想好了，让他开始问。',
+    '不要说自己是功能、插件、主持人或系统。',
+    '不要主动说出谜底、类别或提示。',
+    '不要输出规则说明、命令帮助、JSON、标签、系统说明。]'
+  ].join('\n')
+}
+
+function buildChatLunaHintInstruction(state) {
+  return [
+    `[norender][系统指令：志贵正在和你玩「猜人物」，现在他向你要提示。`,
+    `隐藏人物：${state.target.name}`,
+    `提示内容：${state.target.hint || `这个人物属于「${state.category}」。`}`,
+    '请完全保持你当前的爱尔奎特人设和聊天口吻，自然给出这一条提示。',
+    '只给这一条提示，不要额外透露谜底、别名或更多信息。',
+    '不要输出 JSON、标签、系统说明。]'
   ].join('\n')
 }
 
@@ -321,24 +351,34 @@ module.exports.apply = (ctx) => {
     return state
   }
 
+  async function startGameThroughPersona(session, category) {
+    const next = beginGame(session, category)
+    session.content = buildChatLunaStartInstruction(next)
+  }
+
   async function handleGameCommand(session, action, args) {
     const state = getState(session)
 
-    if (!action || action === '帮助' || action === 'help') {
+    if (!action) {
+      await startGameThroughPersona(session, '随机')
+      return
+    }
+
+    if (action === '帮助' || action === 'help') {
       await session.send(`🎭 猜人物：\n/猜人物 开始 [随机|${categoryNames()}]\n/猜人物 提示\n/猜人物 放弃\n/猜人物 结束\n\n开始后直接提问也可以，比如：\n“他是历史人物吗？”`)
       return
     }
 
     if (action === '开始' || action === 'start' || action === 'new') {
       const category = args && POOLS[args.trim()] ? args.trim() : '随机'
-      const next = beginGame(session, category)
-      await session.send(`🎲 新局开始。${introLine(next)}\n类别：${next.category}`)
+      await startGameThroughPersona(session, category)
       return
     }
 
     if (action === '提示' || action === 'hint') {
       if (!state) return session.send('还没有正在进行的局。先用 /猜人物 开始 开一局。')
-      await session.send(`🔎 ${hintLine(state)}`)
+      state.updatedAt = now()
+      session.content = buildChatLunaHintInstruction(state)
       return
     }
 
@@ -371,12 +411,17 @@ module.exports.apply = (ctx) => {
       const rest = commandText.slice(GAME_PREFIX.length).trim()
       const match = rest.match(/^(\S+)(?:\s+([\s\S]+))?$/)
       await handleGameCommand(session, match?.[1], match?.[2])
-      return
+      return session.content?.includes('[norender]') ? next() : undefined
     }
 
     if (content.startsWith('/')) return next()
 
     const state = getState(session)
+    if (!state && isNaturalStart(content)) {
+      await startGameThroughPersona(session, '随机')
+      return next()
+    }
+
     if (!state) return next()
 
     if (content.length < 2) return next()
@@ -385,8 +430,8 @@ module.exports.apply = (ctx) => {
     if (analysis.intent === 'chat') return next()
     if (analysis.intent === 'hint') {
       state.updatedAt = now()
-      await session.send(`🔎 ${hintLine(state)}`)
-      return
+      session.content = buildChatLunaHintInstruction(state)
+      return next()
     }
     if (analysis.intent === 'giveup') {
       states.delete(roomKey(session))
