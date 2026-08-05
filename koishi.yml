@@ -91,17 +91,20 @@ plugins:
   ./external/arcueid-system/audio.js:m4dcze: {}
   ./external/arcueid-system/env-perception.js:rfwa95: {}
   ./external/arcueid-system/arcueid-hearing.js:g2ejo5: {}
+  ./external/arcueid-system/vision.js:ixz5mp: {}
   ./external/arcueid-system/arcueid-vector-rag.js:ly2dxy: {}
   ./external/arcueid-system/web-search.js:7h9m3k: {}
   ./external/arcueid-system/reminder.js:1qaiao: {}
   ./external/arcueid-system/personal-assistant.js:8q2rpa: {}
   ./external/arcueid-system/guess-character.js:r7mv4c: {}
   ./external/arcueid-system/image-gen.js:3m5n6q: {}
+  ./external/arcueid-system/user-profile.js:9n4p2v: {}
+  ./external/arcueid-system/proactive-context.js:7yqk2p: {}
   chatluna:6hh9ms:
     botNames:
       - 爱尔奎特
       - null
-    defaultModel: DeepSeek/deepseek-chat
+    defaultModel: DeepSeek/deepseek-v4-flash
     defaultChatMode: chat
     defaultEmbeddings: DeepSeek
     defaultVectorStore: memory
@@ -117,7 +120,7 @@ plugins:
     pullModels: false
     maxContextRatio: 1
     additionalModels:
-      - model: deepseek-chat
+      - model: deepseek-v4-flash
         contextSize: 128000
         modelCapabilities:
           - tool_call
@@ -126,22 +129,19 @@ plugins:
       - null
     globalGroupConfig:
       image: true
-      model: DeepSeek/deepseek-chat
+      model: DeepSeek/deepseek-v4-flash
     globalPrivateConfig:
-      model: DeepSeek/deepseek-chat
+      model: DeepSeek/deepseek-v4-flash
   activelink:h42txt:
     scope:
+      mode: 白名单
       list:
         - type: 群聊
           id: ${{ env.ACTIVELINK_GROUP_ID_1 }}
-        - type: 私聊
-          id: ${{ env.ACTIVELINK_PRIVATE_ID_1 }}
-        - type: 私聊
-          id: ${{ env.ACTIVELINK_PRIVATE_ID_2 }}
     proactive:
       enabled: true
       prompts:
-        - 根据群里之前的聊天氛围主动发起一个话题。你可以表现出无聊想去探险，或者对现代事物感到好奇
+        - 像群友一样自然插一句。只接一个最近的话题，可以好奇、吐槽、接梗或轻轻追问，不要总结聊天记录
       initialProbability: 0.2
       checkInterval: 10
       initialDelay: 1
@@ -149,6 +149,47 @@ plugins:
       enabled: true
       applyDefaultGroupConfigs:
         - ${{ env.ACTIVELINK_GROUP_ID_1 }}
+      groupConfigs:
+        - guildId: default
+          enableActivityTrigger: true
+          activityLowerLimit: 0.85
+          activityUpperLimit: 0.85
+          activityMessageInterval: 12
+          enableIdleTrigger: false
+          historyMessageLimit: 20
+          cooldownSeconds: 300
+          activityPromptTemplate: >-
+            你现在要像群友一样自然地插一句，不是回应命令，也不是做总结。
+
+            当前时间：{date} {time}
+
+            群聊：{group_name}
+
+
+            下面是最近的群聊记录：
+
+            {history}
+
+
+            请先判断这些话里有没有一个适合自然接上的切入口。
+
+            如果没有合适切入点，可以只输出空消息。
+
+            如果开口，只能选一个最近的话题，优先接最后 1 到 3 条里最自然的一句。
+
+            像爱尔奎特本人一样随口说一句：可以好奇、吐槽、接梗、轻轻追问，但不要同时回应多个话题。
+
+            回复要短，通常 8 到 55
+            个汉字左右，完整表达优先，不要为了短而截断句子。不要暴露你看到了“历史记录”，不要逐条复述，不要使用“你们刚才说/我看到/有人提到/关于/听起来你们在”这类总结开头，不要给人一种系统提示生成的感觉。
+
+
+            输出必须使用以下格式：
+
+            <output>
+
+            <message>你的自然回复</message>
+
+            </output>
       applyDefaultPrivateConfigs:
         - ${{ env.ACTIVELINK_PRIVATE_ID_2 }}
         - ${{ env.ACTIVELINK_PRIVATE_ID_1 }}

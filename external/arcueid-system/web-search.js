@@ -1,3 +1,5 @@
+const { buildReplyStyleInstruction } = require('./reply-style');
+
 module.exports = {
   name: 'web-search',
 
@@ -80,7 +82,8 @@ module.exports = {
       }
 
       // 注入搜索结果到上下文，改写消息让 ChatLuna 以为是自然对话
-      let ctx_text = '\n\n[系统指令：志贵刚才说「' + query + '」，你已联网搜索得到了以下最新信息。请用你的口吻简洁地回答志贵，不要直接复制链接。]\n';
+      let ctx_text = '\n\n[系统指令：你已联网搜索得到了以下最新信息。请用你的口吻简洁回答志贵，先给结论，不要复述他的问题，不要直接复制链接。]\n';
+      ctx_text += `${buildReplyStyleInstruction('search')}\n`;
 
       if (res.answer) {
         ctx_text += `AI 摘要参考：${res.answer}\n`;

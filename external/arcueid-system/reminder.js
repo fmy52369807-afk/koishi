@@ -1,4 +1,6 @@
 // 自然语言定时提醒 — SQLite 持久化
+const { buildReplyStyleInstruction, sanitizeReply } = require('./reply-style');
+
 module.exports.name = 'arcueid-reminder';
 module.exports.using = ['database'];
 
@@ -19,11 +21,13 @@ module.exports.apply = (ctx) => {
     isDaily: 'boolean',
     enabled: 'boolean',
     lastFiredDay: 'string',
+    lastFiredReason: 'string',
     createdAt: 'unsigned'
   }, { autoInc: true });
 
   // ── AI 生成提醒消息 ──────────────────────────────
   const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
+  const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
   const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
 
   if (!DEEPSEEK_KEY) {
@@ -34,16 +38,17 @@ module.exports.apply = (ctx) => {
     try {
       if (!DEEPSEEK_KEY) return `志贵，${userMessage}！`;
       const res = await ctx.http.post(DEEPSEEK_URL, {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_MODEL,
         messages: [
           { role: 'system', content: '你是爱尔奎特，真祖的公主。志贵是你的远野志贵。现在到了志贵设定的提醒时间。用你的口吻自然提醒他，一两句话就好，不要用表情符号，像真人在聊天一样。' },
-          { role: 'user', content: `志贵之前说：「${userMessage}」。现在时间到了，请自然地提醒志贵。` }
+          { role: 'system', content: buildReplyStyleInstruction('reminder') },
+          { role: 'user', content: `提醒事项：「${userMessage}」。现在时间到了，请自然地提醒志贵。` }
         ],
         max_tokens: 80, temperature: 0.9,
       }, {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
       });
-      return res?.choices?.[0]?.message?.content?.trim() || `志贵，${userMessage}的时间到啦~`;
+      return sanitizeReply(res?.choices?.[0]?.message?.content, { maxChars: 45 }) || `志贵，${userMessage}的时间到啦~`;
     } catch (e) {
       logger.warn('【AI提醒生成失败】', e.message);
       return `志贵，${userMessage}！`;
@@ -53,11 +58,19 @@ module.exports.apply = (ctx) => {
   // ── 时间解析 ──────────────────────────────────────
   const TIME_UNITS = { '分钟': 60*1000, '分': 60*1000, '小时': 60*60*1000, '时': 60*60*1000, '天': 24*60*60*1000, '周': 7*24*60*60*1000, '星期': 7*24*60*60*1000 };
   const PERIOD_MAP = { '凌晨':0, '早晨':7, '早上':7, '上午':9, '中午':12, '正午':12, '下午':13, '傍晚':17, '黄昏':17, '晚上':19, '夜里':21, '半夜':22 };
-  const NUMBER_MAP = { '一':1, '二':2, '两':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9, '十':10, '半':0.5 };
+  const NUMBER_MAP = { '零':0, '〇':0, '一':1, '二':2, '两':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9, '十':10, '半':0.5 };
 
   function toDigit(str) {
-    const map = { '零':0, '一':1, '二':2, '两':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9, '十':10 };
-    if (str in map) return map[str];
+    str = String(str || '').trim();
+    if (!str) return null;
+    if (/^\d+$/.test(str)) return parseInt(str, 10);
+    if (str in NUMBER_MAP) return NUMBER_MAP[str];
+    const tenParts = str.match(/^([一二两三四五六七八九])?十([一二两三四五六七八九])?$/);
+    if (tenParts) {
+      const tens = tenParts[1] ? NUMBER_MAP[tenParts[1]] : 1;
+      const ones = tenParts[2] ? NUMBER_MAP[tenParts[2]] : 0;
+      return tens * 10 + ones;
+    }
     const n = parseInt(str);
     return isNaN(n) ? null : n;
   }
@@ -77,20 +90,17 @@ module.exports.apply = (ctx) => {
 
   function detectDaily(text) {
     text = text.replace(/^(?:请)?记得\s*/, '').trim();
-    const patterns = [
-      /^(每天|每日|天天)\s*/,
-      /[，,。；;\s]*(每天|每日|天天)(都|也)?(要|得|记得)?$/,
-      /(天天|每天|每日)(提醒|叫|喊|通知)/,
-    ];
 
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) {
-        return {
-          daily: true,
-          text: text.replace(pattern, '').trim(),
-        };
-      }
+    if (/(每天|每日|天天)/.test(text)) {
+      return {
+        daily: true,
+        text: text
+          .replace(/^(每天|每日|天天)\s*(都|也)?\s*(要|得|记得)?\s*/, '')
+          .replace(/[，,。；;\s]*(每天|每日|天天)(都|也)?(要|得|记得)?\s*$/, '')
+          .replace(/(天天|每天|每日)\s*(提醒|叫|喊|通知)/, '$2')
+          .replace(/\s*(每天|每日|天天)\s*/g, '')
+          .trim(),
+      };
     }
 
     return { daily: false, text };
@@ -113,9 +123,9 @@ module.exports.apply = (ctx) => {
     msg = stripLeadingCommand((msg || '').trim());
 
     // 1. 相对时间
-    const relMatch = msg.match(/^(\d+|[一二两三四五六七八九十]+)\s*(分钟|分|小时|时|天|周|星期)\s*后?\s*(.+)$/);
+    const relMatch = msg.match(/^(\d+|[零〇一二两三四五六七八九十]+)\s*(分钟|分|小时|时|天|周|星期)\s*后?\s*(.+)$/);
     if (relMatch) {
-      const num = parseInt(relMatch[1]) || (NUMBER_MAP[relMatch[1]] || 0);
+      const num = toDigit(relMatch[1]) || 0;
       const unit = TIME_UNITS[relMatch[2]];
       const message = cleanReminderMessage(relMatch[3]);
       if (num > 0 && unit && message) return { time: new Date(Date.now() + num * unit), isDaily: false, message };
@@ -144,10 +154,13 @@ module.exports.apply = (ctx) => {
     }
 
     let hour = null, minute = 0;
-    const dm = msg.match(/^(\d{1,2}|[一二两三四五六七八九十]{1,2})\s*[点时：:]\s*(半|(\d{1,2})\s*分?)?/);
+    const dm = msg.match(/^(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*[点时：:]\s*(半|一刻|三刻|(\d{1,2}|[零〇一二两三四五六七八九十]{1,3})\s*分?)?/);
     if (dm) {
       hour = toDigit(dm[1]);
-      if (dm[2] === '半') minute = 30; else if (dm[3]) minute = parseInt(dm[3]) || 0;
+      if (dm[2] === '半') minute = 30;
+      else if (dm[2] === '一刻') minute = 15;
+      else if (dm[2] === '三刻') minute = 45;
+      else if (dm[3]) minute = toDigit(dm[3]) || 0;
       msg = msg.slice(dm[0].length);
     }
     if (hour === null) {
@@ -178,7 +191,8 @@ module.exports.apply = (ctx) => {
   }
 
   function cstPart(ts, part) {
-    return parseInt(new Date(ts).toLocaleString('en-US', { timeZone: 'Asia/Shanghai', [part]: '2-digit', hour12: false }).replace(/\D/g, ''));
+    const value = parseInt(new Date(ts).toLocaleString('en-US', { timeZone: 'Asia/Shanghai', [part]: '2-digit', hour12: false }).replace(/\D/g, ''));
+    return part === 'hour' && value === 24 ? 0 : value;
   }
 
   function reminderSortValue(r) {
@@ -207,6 +221,35 @@ module.exports.apply = (ctx) => {
     return nowMinute >= dueMinute;
   }
 
+  function initialLastFiredDayForDaily(hour, minute) {
+    const nowBj = beijingNow();
+    const dueMinute = (hour || 0) * 60 + (minute || 0);
+    const nowMinute = nowBj.getHours() * 60 + nowBj.getMinutes();
+    return nowMinute >= dueMinute ? beijingDayKey(nowBj) : null;
+  }
+
+  function initialDailyFireState(hour, minute, reason) {
+    const lastFiredDay = initialLastFiredDayForDaily(hour, minute);
+    return {
+      lastFiredDay,
+      lastFiredReason: lastFiredDay ? reason : null,
+    };
+  }
+
+  function dailyStateText(r, nowBj = beijingNow()) {
+    const today = beijingDayKey(nowBj);
+    if (r.lastFiredDay === today) {
+      if (r.lastFiredReason === 'sent') return '今天已触发';
+      if (r.lastFiredReason === 'manual_done') return '今天已标记完成';
+      if (r.lastFiredReason === 'failed') return '今天发送失败，明天会再试';
+      if (r.lastFiredReason === 'created_after_due') return '今天设置时已过点，明天开始触发';
+      if (r.lastFiredReason === 'edited_after_due') return '今天编辑时已过点，明天开始触发';
+      if (r.lastFiredReason === 'restored_after_due') return '今天恢复时已过点，明天开始触发';
+      return '今天已处理';
+    }
+    return dailyDue(r, nowBj) ? '今天待补发' : '还没到时间';
+  }
+
   function formatReminderTime(r) {
     if (r.isDaily) return `每天 ${pad2(r.hour)}:${pad2(r.minute)}`;
     const h = cstPart(r.fireAt, 'hour');
@@ -224,10 +267,51 @@ module.exports.apply = (ctx) => {
     return `${icon} #${r.id} ${formatReminderTime(r)}${status}「${r.message}」`;
   }
 
+  async function buildReminderDiagnosticReply(session) {
+    const uid = session.userId || session.author?.userId || 'unknown';
+    const cid = session.channelId;
+    const all = await ctx.database.get('reminders', { uid, channelId: cid });
+    const enabled = all.filter(r => r.enabled);
+    const daily = enabled.filter(r => r.isDaily);
+    const once = enabled.filter(r => !r.isDaily);
+    const nowBj = beijingNow();
+    const today = beijingDayKey(nowBj);
+
+    if (!all.length) {
+      return `我查了一下，这个频道里现在没有你的提醒记录。\n如果你刚才只是聊天里说“怎么不提醒”，那不会自动补建提醒；重新说一次具体时间，比如“下午五点十分提醒我喝水”，我会按真实记录存下来。`;
+    }
+
+    let reply = `我查了真实提醒记录：现在 ${nowBj.toLocaleString('zh-CN')}，这个频道共有 ${all.length} 条记录，生效中 ${enabled.length} 条。`;
+    if (!enabled.length) {
+      const disabled = all.slice().sort((a, b) => b.createdAt - a.createdAt)[0];
+      return `${reply}\n不过生效中的提醒没有了。最近一条是 #${disabled.id}「${disabled.message}」，状态是已取消或已完成。`;
+    }
+
+    const next = enabled.slice().sort((a, b) => reminderSortValue(a) - reminderSortValue(b))[0];
+    reply += `\n最近一条生效提醒：${formatReminderLine(next)}`;
+
+    if (daily.length) {
+      reply += '\n每日提醒状态：';
+      daily.sort((a, b) => reminderSortValue(a) - reminderSortValue(b)).forEach(r => {
+        const state = dailyStateText(r, nowBj);
+        reply += `\n#${r.id} ${pad2(r.hour)}:${pad2(r.minute)} ${state}「${r.message}」`;
+      });
+    }
+
+    if (once.length) {
+      reply += '\n一次性提醒：';
+      once.sort((a, b) => reminderSortValue(a) - reminderSortValue(b)).slice(0, 3).forEach(r => {
+        reply += `\n#${r.id} ${formatReminderTime(r)}「${r.message}」`;
+      });
+    }
+
+    return `${reply}\n你也可以发“/提醒 诊断”看完整状态。`;
+  }
+
   function parseDuration(text) {
-    const match = (text || '').trim().match(/^(\d+|[一二两三四五六七八九十]+)\s*(分钟|分|小时|时|天)$/);
+    const match = (text || '').trim().match(/^(\d+|[零〇一二两三四五六七八九十]+)\s*(分钟|分|小时|时|天)$/);
     if (!match) return null;
-    const num = parseInt(match[1]) || NUMBER_MAP[match[1]];
+    const num = toDigit(match[1]);
     const unit = TIME_UNITS[match[2]];
     if (!num || !unit) return null;
     return num * unit;
@@ -244,6 +328,43 @@ module.exports.apply = (ctx) => {
 
   // ── 触发检查（每分钟） ──────────────────────────
   let checking = false;
+  const recentDeliveredReminders = new Map();
+  const REMINDER_CONTEXT_TTL = 15 * 60 * 1000;
+
+  function reminderContextKey(platform, channelId, uid) {
+    return [platform || '', channelId || '', uid || ''].join(':');
+  }
+
+  function rememberDeliveredReminder(r, sentMessage) {
+    const item = {
+      channelId: r.channelId,
+      uid: r.uid,
+      platform: r.platform || '',
+      selfId: r.selfId || '',
+      reminderId: r.id,
+      reminderMessage: r.message,
+      sentMessage,
+      sentAt: Date.now(),
+      isDaily: !!r.isDaily,
+    };
+    recentDeliveredReminders.set(reminderContextKey(r.platform, r.channelId, r.uid), item);
+    recentDeliveredReminders.set(reminderContextKey('', r.channelId, r.uid), item);
+  }
+
+  function getRecentDeliveredReminder(session) {
+    const uid = session.userId || session.author?.userId || '';
+    const keys = [
+      reminderContextKey(session.platform, session.channelId, uid),
+      reminderContextKey('', session.channelId, uid),
+    ];
+    const item = keys.map(key => recentDeliveredReminders.get(key)).find(Boolean);
+    if (!item) return null;
+    if (Date.now() - item.sentAt > REMINDER_CONTEXT_TTL) {
+      keys.forEach(key => recentDeliveredReminders.delete(key));
+      return null;
+    }
+    return item;
+  }
 
   async function deliverReminder(r) {
     const bot = findBot(r);
@@ -252,10 +373,16 @@ module.exports.apply = (ctx) => {
       return false;
     }
 
-    const msg = await generateReminderMsg(r.message);
-    await bot.sendMessage(r.channelId, msg);
-    logger.info(`【契约执行】→ ${r.channelId}: "${msg}"`);
-    return true;
+    try {
+      const msg = await generateReminderMsg(r.message);
+      await bot.sendMessage(r.channelId, msg);
+      rememberDeliveredReminder(r, msg);
+      logger.info(`【契约执行】→ ${r.channelId}: "${msg}"`);
+      return true;
+    } catch (e) {
+      logger.warn(`【契约执行失败】#${r.id} → ${r.channelId}: ${e.message}`);
+      return false;
+    }
   }
 
   async function checkAndFire() {
@@ -274,7 +401,9 @@ module.exports.apply = (ctx) => {
           if (dailyDue(r, beijing) && r.lastFiredDay !== today) {
             const sent = await deliverReminder(r);
             if (sent) {
-              await ctx.database.set('reminders', { id: r.id }, { lastFiredDay: today });
+              await ctx.database.set('reminders', { id: r.id }, { lastFiredDay: today, lastFiredReason: 'sent' });
+            } else {
+              await ctx.database.set('reminders', { id: r.id }, { lastFiredDay: today, lastFiredReason: 'failed' });
             }
           }
         } else if (r.fireAt && r.fireAt <= now) {
@@ -342,7 +471,7 @@ module.exports.apply = (ctx) => {
         if (parsed.isDaily) {
           row.hour = cstPart(parsed.time.getTime(), 'hour');
           row.minute = cstPart(parsed.time.getTime(), 'minute');
-          row.lastFiredDay = null;
+          Object.assign(row, initialDailyFireState(row.hour, row.minute, 'created_after_due'));
         } else {
           row.fireAt = parsed.time.getTime();
         }
@@ -395,9 +524,8 @@ module.exports.apply = (ctx) => {
         let info = `📌 提醒 #${r.id}\n状态: ${r.enabled ? '✅ 生效中' : '❌ 已取消'}\n创建者: 你`;
         if (r.isDaily) {
           const nowBj = beijingNow();
-          const due = dailyDue(r, nowBj);
           info += `\n类型: 🔁 每日\n时间: 每天 ${pad2(r.hour)}:${pad2(r.minute)}`;
-          info += `\n今日状态: ${r.lastFiredDay === beijingDayKey(nowBj) ? '今天已触发' : due ? '今天待补发' : '等待时间到达'}`;
+          info += `\n今日状态: ${dailyStateText(r, nowBj)}`;
           if (r.lastFiredDay) info += `\n上次触发: ${r.lastFiredDay}`;
         } else {
           info += `\n类型: ⏰ 一次性\n时间: ${formatReminderTime(r)}`;
@@ -424,12 +552,13 @@ module.exports.apply = (ctx) => {
           updates.hour = cstPart(parsed.time.getTime(), 'hour');
           updates.minute = cstPart(parsed.time.getTime(), 'minute');
           updates.fireAt = null;
-          updates.lastFiredDay = null;
+          Object.assign(updates, initialDailyFireState(updates.hour, updates.minute, 'edited_after_due'));
         } else {
           updates.fireAt = parsed.time.getTime();
           updates.hour = null;
           updates.minute = null;
           updates.lastFiredDay = null;
+          updates.lastFiredReason = null;
         }
         await ctx.database.set('reminders', { id: idx }, updates);
         logger.info(`【契约变更】#${idx} → "${parsed.message}"`);
@@ -465,7 +594,7 @@ module.exports.apply = (ctx) => {
         if (!items.length) return `没找到序号 ${idx} 的提醒。`;
         const r = items[0];
         if (r.isDaily) {
-          await ctx.database.set('reminders', { id: idx }, { lastFiredDay: beijingDayKey(beijingNow()) });
+          await ctx.database.set('reminders', { id: idx }, { lastFiredDay: beijingDayKey(beijingNow()), lastFiredReason: 'manual_done' });
           return `✅ 今天的每日提醒已标记完成：#${idx}「${r.message}」`;
         }
         await ctx.database.remove('reminders', { id: idx });
@@ -491,7 +620,12 @@ module.exports.apply = (ctx) => {
         if (isNaN(idx)) return '序号不对哦。';
         const items = await ctx.database.get('reminders', { id: idx, uid, channelId: cid });
         if (!items.length) return `没找到序号 ${idx} 的提醒。`;
-        await ctx.database.set('reminders', { id: idx }, { enabled: true });
+        const r = items[0];
+        const updates = { enabled: true };
+        if (r.isDaily) {
+          Object.assign(updates, initialDailyFireState(r.hour, r.minute, 'restored_after_due'));
+        }
+        await ctx.database.set('reminders', { id: idx }, updates);
         logger.info(`【契约恢复】#${idx} "${items[0].message}"`);
         return `✅ 已恢复：#${idx}「${items[0].message}」`;
       }
@@ -510,23 +644,7 @@ module.exports.apply = (ctx) => {
 
       // 诊断
       if (action === '诊断' || action === 'status' || action === 'debug') {
-        const all = await ctx.database.get('reminders', { uid, channelId: cid });
-        const enabled = all.filter(r => r.enabled);
-        const daily = enabled.filter(r => r.isDaily);
-        const once = enabled.filter(r => !r.isDaily);
-        const nowBj = beijingNow();
-        const today = beijingDayKey(nowBj);
-        let reply = `🩺 提醒诊断\n当前北京时间: ${nowBj.toLocaleString('zh-CN')}\n当前频道记录: ${all.length} 条\n生效中: ${enabled.length} 条（每日 ${daily.length}，一次性 ${once.length}）`;
-        if (!daily.length) {
-          reply += '\n\n没有生效中的每日提醒。';
-        } else {
-          reply += '\n\n每日提醒：';
-          daily.sort((a, b) => reminderSortValue(a) - reminderSortValue(b)).forEach(r => {
-            const state = r.lastFiredDay === today ? '今天已触发' : dailyDue(r, nowBj) ? '今天待补发' : '未到时间';
-            reply += `\n#${r.id} ${pad2(r.hour)}:${pad2(r.minute)} ${state}，上次=${r.lastFiredDay || '无'}「${r.message}」`;
-          });
-        }
-        return reply;
+        return buildReminderDiagnosticReply(session);
       }
 
       return '对我说「早上8点叫我起床」就行啦~ 输入 /提醒 帮助 查看更多。';
@@ -534,11 +652,24 @@ module.exports.apply = (ctx) => {
 
   // ── 自然语言中间件 ───────────────────────────────
   const TRIGGER_WORDS = /提醒|叫我|喊我|通知我|记得叫我|记得提醒/;
+  const REMINDER_TROUBLE_WORDS = /(?:怎么|咋|为什么|为啥|咋就).{0,8}(?:不|没|没有).{0,6}(?:提醒|叫我|通知我|触发|响)|(?:提醒|叫我|通知我).{0,8}(?:没响|没触发|没发|失效|坏了)/;
 
   ctx.middleware(async (session, next) => {
     const content = (session.content || '').toString().replace(/<at[^>]*\/>/g, '').trim();
     if (!content || content.startsWith('/') || content.startsWith('搜索') || content.startsWith('空想具象化')) return next();
+
+    const recentReminder = getRecentDeliveredReminder(session);
+    if (recentReminder && !/^(?:提醒|叫我|喊我|通知我|记得叫我|记得提醒)/.test(content)) {
+      const firedAt = new Date(recentReminder.sentAt).toLocaleString('zh-CN');
+      session.content = `${content}\n\n[系统指令：你刚刚在 ${firedAt} 主动提醒过用户。提醒内容是「${recentReminder.reminderMessage}」，你发送的提醒文本是「${recentReminder.sentMessage}」。当前这句是用户对刚才提醒的回应，请自然短句接话，先承认你刚刚已经提醒过，不要再说自己忘了提醒，也不要把对话带回到“是否已经提醒”这种怀疑上。一次只回应当前这句话的核心意思。]\n${buildReplyStyleInstruction('addressed')}`;
+    }
+
     if (!TRIGGER_WORDS.test(content)) return next();
+
+    if (REMINDER_TROUBLE_WORDS.test(content)) {
+      await session.send(await buildReminderDiagnosticReply(session));
+      return;
+    }
 
     const parsed = parseTime(content);
     if (!parsed) return next();
@@ -559,7 +690,7 @@ module.exports.apply = (ctx) => {
     if (parsed.isDaily) {
       row.hour = cstPart(parsed.time.getTime(), 'hour');
       row.minute = cstPart(parsed.time.getTime(), 'minute');
-      row.lastFiredDay = null;
+      Object.assign(row, initialDailyFireState(row.hour, row.minute, 'created_after_due'));
     } else {
       row.fireAt = parsed.time.getTime();
     }
@@ -576,7 +707,7 @@ module.exports.apply = (ctx) => {
       : `${mon}月${day}日 ${pad2(h)}:${pad2(m)}`;
     logger.info(`【契约成立】#${id} ${parsed.isDaily ? '每日' : '一次性'} ${timeDesc} "${parsed.message}"`);
 
-    session.content = `[norender][系统指令：志贵刚才对你说「${content}」。你已经帮他设置好了${parsed.isDaily ? '每日' : '一次性'}提醒：${timeDesc}「${parsed.message}」。请用你的口吻自然回应志贵，确认你记住了。一两句话，绝对不要输出任何技术格式如 [定时:...] 或 [提醒:...]，就像普通聊天一样。]`;
+    session.content = `[norender][系统指令：志贵刚才对你说「${content}」。你已经帮他设置好了${parsed.isDaily ? '每日' : '一次性'}提醒：${timeDesc}「${parsed.message}」。请用你的口吻自然回应志贵，确认你记住了。只说一句短话，绝对不要输出任何技术格式如 [定时:...] 或 [提醒:...]，不要复述完整提醒内容。]\n${buildReplyStyleInstruction('reminder')}`;
     return next();
   }, true);
 

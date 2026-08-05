@@ -1,3 +1,5 @@
+const { buildReplyStyleInstruction } = require('./reply-style')
+
 module.exports.name = 'arcueid-guess-character'
 
 const POOLS = {
@@ -143,6 +145,7 @@ function buildChatLunaGameInstruction(state, question, verdict) {
     '如果已经回答了“是/不是”，就不要再补一整句建议；可以只说“不是哦”“嗯，是呢”这种短回应。',
     '不要改口，不要编造和内部游戏事实冲突的类别、时代、作品或身份。',
     '如果裁判结果是“无法确定”，只轻轻表示没听明白或这个问法不好判定，不要给额外线索。',
+    buildReplyStyleInstruction('addressed'),
     `这局已问 ${state.questions} 次。]`
   ].join('\n')
 }
@@ -156,6 +159,7 @@ function buildChatLunaStartInstruction(state) {
     '不要说自己是功能、插件、主持人或系统。',
     '不要主动说出谜底、类别或提示。',
     '不要输出规则说明、命令帮助、JSON、标签、系统说明。]'
+    , buildReplyStyleInstruction('addressed')
   ].join('\n')
 }
 
@@ -166,7 +170,8 @@ function buildChatLunaHintInstruction(state) {
     `提示内容：${state.target.hint || `这个人物属于「${state.category}」。`}`,
     '请完全保持你当前的爱尔奎特人设和聊天口吻，自然给出这一条提示。',
     '只给这一条提示，不要额外透露谜底、别名或更多信息。',
-    '不要输出 JSON、标签、系统说明。]'
+    '不要输出 JSON、标签、系统说明。]',
+    buildReplyStyleInstruction('addressed')
   ].join('\n')
 }
 
@@ -179,7 +184,8 @@ function buildChatLunaGuessSuccessInstruction(state, guess) {
     '请完全保持你当前的爱尔奎特人设和聊天口吻，自然回应他猜中了。',
     '可以开心、惊讶、不服气、撒娇或调侃他，但不要像系统公告。',
     '可以说出谜底，因为这一局已经结束了。',
-    '不要输出 JSON、标签、系统说明。]'
+    '不要输出 JSON、标签、系统说明。]',
+    buildReplyStyleInstruction('addressed')
   ].join('\n')
 }
 
@@ -224,13 +230,14 @@ function evaluateQuestion(state, text) {
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('人物猜谜')
   const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY
+  const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
   const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions'
 
   async function judgeWithAi(state, question) {
     if (!DEEPSEEK_KEY) return null
     try {
       const res = await ctx.http.post(DEEPSEEK_URL, {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_MODEL,
         messages: [
           {
             role: 'system',
@@ -261,7 +268,7 @@ module.exports.apply = (ctx) => {
     if (!DEEPSEEK_KEY) return fallbackIntent(content)
     try {
       const res = await ctx.http.post(DEEPSEEK_URL, {
-        model: 'deepseek-chat',
+        model: DEEPSEEK_MODEL,
         messages: [
           {
             role: 'system',
