@@ -2,15 +2,15 @@
 
 一个以 [Koishi](https://koishi.chat/) 为运行时、以 ChatLuna 为对话编排层的角色化 QQ AI 助手。项目以 QQ / OneBot 为主接入，组合了多模态输入、长期状态、检索增强、主动群聊约束和面向聊天场景的出站渲染。
 
-> 这是一个可公开复现的工程项目，而不是通用 SaaS。运行时数据、私聊/群聊内容、媒体、向量库和 `.env` 都不在仓库中。查看 [Security and Privacy](SECURITY.md) 了解数据边界。
+> 这是一个可自行部署的单实例项目，而不是通用 SaaS。运行时数据、私聊/群聊内容、媒体、向量库和 `.env` 都不在仓库中。查看 [Security and Privacy](SECURITY.md) 了解数据边界。
 
-## 作品亮点
+## 核心能力
 
 - **插件化对话流水线**：在 Koishi 中组合语音、视觉、环境感知、RAG、搜索、提醒、记忆与角色对话。
 - **可控状态层**：SQLite 持久化提醒、待办、长期记忆和白名单用户画像；按用户、频道、平台和机器人实例隔离。
 - **轻量本地 RAG**：二进制 `Float32Array` 向量库、断点导入、查询缓存、关键词候选裁剪和余弦精排。
 - **可靠外部调用**：统一超时、有限重试、指数退避和不暴露密钥的错误摘要。
-- **公开可验证**：零密钥测试、匿名演示夹具、性能脚本和 GitHub Actions CI。
+- **可重复验证**：零密钥测试、匿名演示夹具、性能脚本和 GitHub Actions CI。
 
 ## 架构
 
@@ -227,7 +227,7 @@ GitHub Actions 在 `main`、`codex/**` 推送及针对 `main` 的 Pull Request �
 
 ## 匿名演示
 
-[`demo/`](demo/README.md) 提供可用于截图、答辩和面试讲解的公开夹具：
+[`demo/`](demo/README.md) 提供可用于截图和功能讲解的公开夹具：
 
 - [`conversation.json`](demo/fixtures/conversation.json)：文字、RAG、搜索和图片理解上下文。
 - [`assistant-state.json`](demo/fixtures/assistant-state.json)：提醒、待办和记忆的匿名状态。
