@@ -2,7 +2,7 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Releases are tagged as `vMAJOR.MINOR.PATCH`; unreleased branch work stays under `Unreleased` until it is merged and published.
 
-## [Unreleased]
+## [1.17.0] - 2026-08-10
 
 ### Added
 
