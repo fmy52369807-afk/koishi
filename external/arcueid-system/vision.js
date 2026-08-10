@@ -1,22 +1,22 @@
 const { buildReplyStyleInstruction } = require('./reply-style');
+const { config } = require('./config');
+const { errorSummary, requestWithRetry } = require('./http-client');
 
 module.exports.name = 'arcueid-vision';
 
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('视觉神经');
-  const OPENAI_BASE_URL = (process.env.OPENAI_VISION_BASE_URL || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
-  const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
-  const OPENAI_KEY = process.env.OPENAI_VISION_API_KEY
-    || (/siliconflow\.cn/i.test(OPENAI_BASE_URL) ? process.env.SILICONFLOW_API_KEY : '')
-    || process.env.OPENAI_API_KEY;
-  const MAX_IMAGES = parseInt(process.env.VISION_MAX_IMAGES || '2', 10) || 2;
-  const VISION_TIMEOUT_MS = parseInt(process.env.VISION_TIMEOUT_MS || '45000', 10) || 45000;
-  const IMAGE_FETCH_TIMEOUT_MS = parseInt(process.env.VISION_IMAGE_FETCH_TIMEOUT_MS || '12000', 10) || 12000;
-  const INLINE_REMOTE_IMAGES = /^true$/i.test(process.env.VISION_INLINE_REMOTE_IMAGES || '');
+  const OPENAI_BASE_URL = config.vision.baseUrl;
+  const OPENAI_VISION_MODEL = config.vision.model;
+  const OPENAI_KEY = config.vision.apiKey;
+  const MAX_IMAGES = config.vision.maxImages;
+  const VISION_TIMEOUT_MS = config.vision.timeoutMs;
+  const IMAGE_FETCH_TIMEOUT_MS = config.vision.imageFetchTimeoutMs;
+  const INLINE_REMOTE_IMAGES = config.vision.inlineRemoteImages;
 
   if (!OPENAI_KEY) {
     logger.warn('OPENAI_VISION_API_KEY / SILICONFLOW_API_KEY / OPENAI_API_KEY 未配置，识图功能将不可用。');
-  } else if (!process.env.OPENAI_VISION_API_KEY && /hikariapi\.xyz/i.test(OPENAI_BASE_URL)) {
+  } else if (!config.vision.explicitApiKey && /hikariapi\.xyz/i.test(OPENAI_BASE_URL)) {
     logger.warn('识图正在复用 OPENAI_API_KEY 与 Hikari 代理。如果这枚 key 是生图专用分组，视觉模型会调用失败；建议配置 OPENAI_VISION_API_KEY / OPENAI_VISION_BASE_URL。');
   }
 
@@ -167,9 +167,12 @@ module.exports.apply = (ctx) => {
       return toImageUrl(String(resolved), session);
     }
 
-    const data = await ctx.http.get(url, {
+    const data = await requestWithRetry(ctx, 'get', url, null, {
       responseType: 'arraybuffer',
+    }, {
       timeout: IMAGE_FETCH_TIMEOUT_MS,
+      retries: config.http.retries,
+      retryDelayMs: config.http.retryDelayMs,
     });
     const buffer = Buffer.from(data);
     if (!buffer.length) throw new Error('图片下载为空');
@@ -193,7 +196,7 @@ module.exports.apply = (ctx) => {
     }
     logger.info('【视觉感知】图片已整理，正在请求视觉模型。');
 
-    const res = await ctx.http.post(`${OPENAI_BASE_URL}/chat/completions`, {
+    const res = await requestWithRetry(ctx, 'post', config.vision.chatUrl, {
       model: OPENAI_VISION_MODEL,
       messages: [
         {
@@ -211,24 +214,21 @@ module.exports.apply = (ctx) => {
       temperature: 0.3,
       max_tokens: 500,
     }, {
-      timeout: VISION_TIMEOUT_MS,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${OPENAI_KEY}`,
       },
+    }, {
+      timeout: VISION_TIMEOUT_MS,
+      retries: config.http.retries,
+      retryDelayMs: config.http.retryDelayMs,
     });
 
     return String(res?.choices?.[0]?.message?.content || '').trim();
   }
 
   function summarizeVisionError(err) {
-    const status = err?.response?.status || err?.status || err?.code || '';
-    const data = err?.response?.data || err?.data;
-    const detail = typeof data === 'string'
-      ? data
-      : data?.error?.message || data?.message || '';
-    const pieces = [status, detail || err?.message || String(err)].filter(Boolean);
-    return pieces.join(' ');
+    return errorSummary(err);
   }
 
   ctx.middleware(async (session, next) => {

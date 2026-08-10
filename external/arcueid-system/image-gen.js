@@ -1,19 +1,20 @@
 // 空想具象化 — AI 生图（OpenAI 优先，硅基流动 Kolors 兜底）
 const { h } = require('koishi');
 const { buildReplyStyleInstruction, sanitizeReply } = require('./reply-style');
+const { config } = require('./config');
+const { errorSummary, requestWithRetry } = require('./http-client');
 
 module.exports.name = 'arcueid-image-gen';
 
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('空想具象化');
   const PREFIX = '空想具象化';
-  const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://hikariapi.xyz/v1').replace(/\/$/, '');
-  const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-2';
-  const OPENAI_KEY = process.env.OPENAI_API_KEY;
-  const SF_API = 'https://api.siliconflow.cn/v1/images/generations';
-  const SF_KEY = process.env.SILICONFLOW_API_KEY;
-const DS_KEY = process.env.DEEPSEEK_API_KEY;
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
+  const OPENAI_IMAGE_MODEL = config.image.openaiModel;
+  const OPENAI_KEY = config.image.openaiApiKey;
+  const SF_API = config.siliconFlow.imageUrl;
+  const SF_KEY = config.siliconFlow.apiKey;
+  const DS_KEY = config.deepseek.apiKey;
+  const DEEPSEEK_MODEL = config.deepseek.model;
 
   if (!OPENAI_KEY && !SF_KEY) {
     logger.warn('OPENAI_API_KEY / SILICONFLOW_API_KEY 均未配置，生图功能将不可用。');
@@ -31,16 +32,20 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
   async function generateWithOpenAI(prompt) {
     if (!OPENAI_KEY) return null;
 
-    const res = await ctx.http.post(`${OPENAI_BASE_URL}/images/generations`, {
+    const res = await requestWithRetry(ctx, 'post', config.image.openaiGenerationUrl, {
       model: OPENAI_IMAGE_MODEL,
       prompt: imagePrompt(prompt),
-      size: '1024x1024',
+      size: config.image.size,
       n: 1
     }, {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${OPENAI_KEY}`
-      }
+      },
+    }, {
+      timeout: config.image.timeoutMs,
+      retries: config.http.retries,
+      retryDelayMs: config.http.retryDelayMs,
     });
 
     const item = res?.data?.[0];
@@ -48,7 +53,13 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
       return item.b64_json;
     }
     if (item?.url) {
-      const imgData = await ctx.http.get(item.url, { responseType: 'arraybuffer' });
+      const imgData = await requestWithRetry(ctx, 'get', item.url, null, {
+        responseType: 'arraybuffer',
+      }, {
+        timeout: config.image.downloadTimeoutMs,
+        retries: config.http.retries,
+        retryDelayMs: config.http.retryDelayMs,
+      });
       return Buffer.from(imgData).toString('base64');
     }
     return null;
@@ -57,22 +68,32 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
   async function generateWithSiliconFlow(prompt) {
     if (!SF_KEY) return null;
 
-    const res = await ctx.http.post(SF_API, {
-      model: 'Kwai-Kolors/Kolors',
+    const res = await requestWithRetry(ctx, 'post', SF_API, {
+      model: config.siliconFlow.imageModel,
       prompt: imagePrompt(prompt),
       num_images: 1,
-      image_size: '1024x1024'
+      image_size: config.image.size
     }, {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${SF_KEY}`
-      }
+      },
+    }, {
+      timeout: config.siliconFlow.timeoutMs,
+      retries: config.http.retries,
+      retryDelayMs: config.http.retryDelayMs,
     });
 
     const imgUrl = res?.images?.[0]?.url;
     if (!imgUrl) return null;
 
-    const imgData = await ctx.http.get(imgUrl, { responseType: 'arraybuffer' });
+    const imgData = await requestWithRetry(ctx, 'get', imgUrl, null, {
+      responseType: 'arraybuffer',
+    }, {
+      timeout: config.image.downloadTimeoutMs,
+      retries: config.http.retries,
+      retryDelayMs: config.http.retryDelayMs,
+    });
     return Buffer.from(imgData).toString('base64');
   }
 
@@ -104,7 +125,7 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
     try {
       const [imgBase64, textRes] = await Promise.all([
         generateImage(prompt),
-        DS_KEY ? ctx.http.post('https://api.deepseek.com/v1/chat/completions', {
+        DS_KEY ? requestWithRetry(ctx, 'post', config.deepseek.chatUrl, {
           model: DEEPSEEK_MODEL,
           messages: [
             { role: 'system', content: '你是爱尔奎特，真祖的公主，拥有空想具象化的能力。志贵是你的远野志贵。现在你刚刚用空想具象化为志贵变出了一个东西。用你的口吻说一句简短的话，告诉志贵东西变出来了。一句话，像"看！怎么样，我的空想具象化还不错吧？"这种风格。' },
@@ -114,6 +135,10 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
           max_tokens: 60, temperature: 0.9,
         }, {
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DS_KEY}` }
+        }, {
+          timeout: config.deepseek.timeoutMs,
+          retries: config.http.retries,
+          retryDelayMs: config.http.retryDelayMs,
         }) : Promise.resolve(null)
       ]);
 
@@ -125,7 +150,7 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
       const text = sanitizeReply(textRes?.choices?.[0]?.message?.content, { maxChars: 40 }) || '看，怎么样？';
 
       await session.send(text);
-      await session.send(h.image(`data:image/png;base64,${imgBase64}`));
+      await session.send(h.image(Buffer.from(imgBase64, 'base64'), 'image/png'));
 
       // 注入对话记忆，让 ChatLuna 记住这次交互但不触发回复
       session.content = `[norender]志贵刚才说「${content}」，你使用空想具象化为他变出了「${prompt}」，并回应「${text}」。请记住这段对话。`;
@@ -133,7 +158,7 @@ const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
       return next();
 
     } catch (err) {
-      logger.error('【具象化失败】', err.message);
+      logger.error(`【具象化失败】${errorSummary(err)}`);
       session.send(`唔…魔力不够了，没法变出「${prompt}」。等会儿再试吧~`);
     }
 

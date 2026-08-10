@@ -1,14 +1,17 @@
+const { config } = require('./config');
+const { errorSummary, requestWithRetry } = require('./http-client');
+
 module.exports = {
   name: 'env-perception',
 
   apply(ctx) {
     const logger = ctx.logger('环境感知');
 
-    const CITY = process.env.KOISHI_WEATHER_CITY || '武汉';
+    const CITY = config.weather.city;
     let cachedWeather = null;
     let lastFetchTime = 0;
-    const RETRY_MS = 300000;       // 失败后 5 分钟重试
-    const REFRESH_MS = 3600000;    // 成功后 1 小时刷新
+    const RETRY_MS = config.weather.retryMs;
+    const REFRESH_MS = config.weather.refreshMs;
 
     ctx.middleware(async (session, next) => {
       if (session.content && !session.content.startsWith('/') && !session.content.includes('[norender]')) {
@@ -27,13 +30,19 @@ module.exports = {
         if (now.getTime() - lastFetchTime > (cachedWeather ? REFRESH_MS : RETRY_MS)) {
           try {
             const url = `https://wttr.in/${CITY}?format=%c+%C+%t&lang=zh-cn`;
-            const res = await ctx.http.get(url, { responseType: 'text' });
+            const res = await requestWithRetry(ctx, 'get', url, null, {
+              responseType: 'text',
+            }, {
+              timeout: config.weather.timeoutMs,
+              retries: config.http.retries,
+              retryDelayMs: config.http.retryDelayMs,
+            });
             cachedWeather = res.trim();
             lastFetchTime = now.getTime();
             logger.info(`【气象更新】已感知${CITY}最新天气: ${cachedWeather}`);
           } catch (err) {
             lastFetchTime = now.getTime(); // 失败也更新时间，避免每条消息都重试
-            logger.warn('【感知阻断】无法连接气象塔:', err.message);
+            logger.warn(`【感知阻断】无法连接气象塔: ${errorSummary(err)}`);
           }
         }
 

@@ -1,15 +1,15 @@
 const { buildReplyStyleInstruction, sanitizeReply, analyzeChatStyle, isInternalMetaReply } = require('./reply-style');
+const { config } = require('./config');
 
 module.exports.name = 'arcueid-proactive-context';
 module.exports.using = ['database', 'chatluna'];
 
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('群聊侧耳');
-  const limit = parseInt(process.env.PROACTIVE_CONTEXT_LIMIT || '20', 10) || 20;
-  const triggerInterval = parseInt(process.env.PROACTIVE_TRIGGER_MESSAGES || '12', 10) || 12;
-  const cooldownMs = (parseInt(process.env.PROACTIVE_COOLDOWN_SECONDS || '300', 10) || 300) * 1000;
-  const rawGroup = process.env.ACTIVELINK_GROUP_ID_1 || process.env.PROACTIVE_CONTEXT_GROUPS || '';
-  const allowedGroups = new Set(rawGroup.split(/[,\s]+/).map(s => s.trim()).filter(Boolean).slice(0, 1));
+  const limit = config.proactive.contextLimit;
+  const triggerInterval = config.proactive.triggerMessages;
+  const cooldownMs = config.proactive.cooldownSeconds * 1000;
+  const allowedGroups = new Set(config.proactive.groupIds);
   const histories = new Map();
   const lastLogAt = new Map();
   const stats = new Map();
@@ -36,6 +36,15 @@ module.exports.apply = (ctx) => {
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 300);
+  }
+
+  function isMediaMessage(content) {
+    const value = String(content || '');
+    return /<(?:img|image|audio|video|file)\b/i.test(value)
+      || /\[CQ:(?:image|record|video|file),/i.test(value)
+      || /data:image\/[a-z0-9.+-]+;base64,/i.test(value)
+      || /base64:\/\//i.test(value)
+      || /^file:\/\//i.test(value);
   }
 
   function speakerName(session) {
@@ -465,6 +474,16 @@ ${lines.join('\n')}
 
   ctx.on('before-send', async (session) => {
     if (!session || !session.content || !isAllowedGroup(session)) return;
+    if (isMediaMessage(session.content)) {
+      const content = cleanContent(session.content);
+      if (content) {
+        pushHistory(session, content, {
+          userId: session.selfId || session.bot?.selfId || '',
+          name: botName(session),
+        });
+      }
+      return;
+    }
     if (session.content.includes('[norender]') || session.content.includes('\u200B')) return;
 
     const history = histories.get(session.channelId) || [];

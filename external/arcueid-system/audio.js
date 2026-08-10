@@ -1,15 +1,17 @@
 const { h } = require('koishi')
+const { config } = require('./config')
+const { errorSummary, requestWithRetry } = require('./http-client')
 
 module.exports.name = 'arcueid-custom-tts'
 
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('声音炼金')
 
-  const apiBaseUrl = process.env.TTS_API_URL
-  const refAudioPath = process.env.TTS_REF_AUDIO_PATH || 'E:\\game\\voice-queen\\ar.mp3'
-  const promptText = process.env.TTS_PROMPT_TEXT || '你可以叫我帕朵，也可以叫我菲利斯，随你喜欢，哪个都行。'
-  const promptLang = process.env.TTS_PROMPT_LANG || 'zh'
-  const textLang = process.env.TTS_TEXT_LANG || 'zh'
+  const apiBaseUrl = config.tts.apiBaseUrl
+  const refAudioPath = config.tts.refAudioPath
+  const promptText = config.tts.promptText
+  const promptLang = config.tts.promptLang
+  const textLang = config.tts.textLang
 
   if (!apiBaseUrl) {
     logger.warn('TTS_API_URL 未配置，语音功能将不可用。')
@@ -17,9 +19,10 @@ module.exports.apply = (ctx) => {
 
   // 👇 最高优先级法阵
   ctx.on('before-send', async (session) => {
-    logger.info(`【神经接入】检测到信号: "${session.content}"`)
-
     if (!session.content || session.content.includes('[norender]') || session.content.includes('\u200B')) return
+    if (/<(?:img|image|audio|video|file)\b/i.test(session.content) || /data:image\/[a-z0-9.+-]+;base64,/i.test(session.content) || /base64:\/\//i.test(session.content)) return
+
+    logger.info(`【神经接入】检测到信号: "${String(session.content).slice(0, 120)}"`)
 
     if (!session.content.includes('[语音]')) {
       // 如果大脑没有给出 [语音] 指令，就直接跳过炼金，正常发送纯文字
@@ -38,8 +41,8 @@ module.exports.apply = (ctx) => {
 
     // 1. 究极净化：提取纯净的发音文本
     const cleanText = session.content
-      .replace(/(<[^>]+>)/g, '') 
-      .replace(/([\[【]表情[:：]([^\]】]+)[\]】])/g, '') 
+      .replace(/(<[^>]+>)/g, '')
+      .replace(/([\[【]表情[:：]([^\]】]+)[\]】])/g, '')
       .trim()
 
     if (!cleanText) {
@@ -62,18 +65,22 @@ module.exports.apply = (ctx) => {
       url.searchParams.append('prompt_lang', promptLang)
       url.searchParams.append('prompt_text', promptText)
 
-      const buffer = await ctx.http.get(url.toString(), { 
+      const buffer = await requestWithRetry(ctx, 'get', url.toString(), null, {
         responseType: 'arraybuffer',
         proxy: false
+      }, {
+        timeout: config.tts.timeoutMs,
+        retries: config.http.retries,
+        retryDelayMs: config.http.retryDelayMs,
       })
-      
+
       const buf = Buffer.from(buffer)
 
       logger.info(`【降神成功】声音已就绪，正在抹除原始文字，发射纯语音！`)
       session.content = h.audio(buf, 'audio/wav').toString()
 
     } catch (err) {
-      logger.error('【严重断线】回路短路:', err.message)
+      logger.error(`【严重断线】回路短路: ${errorSummary(err)}`)
     }
   }, true)
 }

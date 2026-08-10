@@ -1,12 +1,12 @@
+const { config } = require('./config');
+
 module.exports.name = 'arcueid-user-profile';
 module.exports.using = ['database'];
 
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('用户画像');
-  const allowedGroups = new Set(String(process.env.ACTIVELINK_GROUP_ID_1 || process.env.PROACTIVE_CONTEXT_GROUPS || '')
-    .split(/[,\s]+/).map(value => value.trim()).filter(Boolean));
-  const allowedPrivateUsers = new Set(String(process.env.ACTIVELINK_PRIVATE_IDS || '')
-    .split(/[,\s]+/).map(value => value.trim()).filter(Boolean));
+  const allowedGroups = new Set(config.proactive.groupIds);
+  const allowedPrivateUsers = new Set(config.proactive.privateIds);
   const writeQueues = new Map();
 
   ctx.database.extend('arc_user_profiles', {

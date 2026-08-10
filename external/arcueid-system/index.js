@@ -33,15 +33,14 @@ module.exports.apply = (ctx) => {
         }
 
         if (foundPath) {
-          // 【核心魔法：将图片碾碎成 Base64 数据流直传，QQ 绝对不会报错！】
+          // 直接交给 Koishi 序列化为图片元素，避免把 data URI 作为长文本发出去。
           const mimeType = foundExt === '.png' ? 'image/png' : foundExt === '.gif' ? 'image/gif' : 'image/jpeg'
           const imageBuffer = fs.readFileSync(foundPath)
-          const base64 = imageBuffer.toString('base64')
-          
-          return h.image(`data:${mimeType};base64,${base64}`).toString()
+
+          return h.image(imageBuffer, mimeType).toString()
         } else {
           // 如果本地没找到对应的表情包，就静默吞掉这个标签，不发乱码
-          return '' 
+          return ''
         }
       })
     }

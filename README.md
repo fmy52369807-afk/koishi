@@ -70,15 +70,28 @@ DEEPSEEK_API_KEY=你的DeepSeek密钥
 | 变量 | 用途 |
 | --- | --- |
 | `DEEPSEEK_API_KEY` | ChatLuna 对话、提醒措辞、猜人物和生图后的角色回复。 |
+| `DEEPSEEK_BASE_URL` | DeepSeek 兼容 API 地址，默认 `https://api.deepseek.com/v1`。 |
 | `DEEPSEEK_MODEL` | DeepSeek 模型名，默认 `deepseek-v4-flash`。 |
+| `DEEPSEEK_TIMEOUT_MS` | DeepSeek 请求超时时间。 |
+| `CHATLUNA_MODEL` | ChatLuna 默认模型，需包含提供商前缀，例如 `DeepSeek/deepseek-v4-flash`。 |
 | `SILICONFLOW_API_KEY` | 向量嵌入、语音转写、图片生成兜底和相关视觉配置。 |
+| `SILICONFLOW_BASE_URL` | SiliconFlow 兼容 API 地址。 |
+| `SILICONFLOW_EMBEDDING_MODEL` / `SILICONFLOW_ASR_MODEL` | 向量嵌入和语音识别模型。 |
+| `SILICONFLOW_IMAGE_MODEL` | SiliconFlow 生图兜底模型。 |
+| `SILICONFLOW_TIMEOUT_MS` | SiliconFlow 请求超时。 |
 | `TAVILY_API_KEY` | 联网搜索。 |
+| `TAVILY_API_URL` | Tavily 搜索接口地址。 |
+| `TAVILY_TIMEOUT_MS` / `TAVILY_CACHE_TTL_MS` / `TAVILY_COOLDOWN_MS` / `TAVILY_MAX_RESULTS` | 搜索超时、缓存、冷却和结果数量。 |
 | `OPENAI_API_KEY` | OpenAI 兼容图片或视觉服务。 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址。 |
 | `OPENAI_IMAGE_MODEL` | 图片生成模型，默认 `gpt-image-2`。 |
+| `OPENAI_IMAGE_SIZE` | 图片尺寸，默认 `1024x1024`。 |
+| `IMAGE_GENERATION_TIMEOUT_MS` / `IMAGE_DOWNLOAD_TIMEOUT_MS` | 生图请求与图片下载超时。 |
 | `OPENAI_VISION_API_KEY` | 独立视觉模型密钥。 |
 | `OPENAI_VISION_BASE_URL` | 独立视觉模型 API 地址。 |
 | `OPENAI_VISION_MODEL` | 视觉模型名。 |
+| `VISION_MAX_IMAGES` / `VISION_TIMEOUT_MS` | 单次图片数量和视觉请求超时。 |
+| `VISION_IMAGE_FETCH_TIMEOUT_MS` / `VISION_INLINE_REMOTE_IMAGES` | 视觉拉图超时与是否内联远程图片。 |
 | `COZE_BOT_ID` / `COZE_TOKEN` | 可选 Coze 集成。 |
 
 ### TTS 与主动上下文
@@ -90,16 +103,21 @@ DEEPSEEK_API_KEY=你的DeepSeek密钥
 | `TTS_PROMPT_TEXT` | 与参考音频对应的提示文本。 |
 | `TTS_PROMPT_LANG` / `TTS_TEXT_LANG` | TTS 提示语言和文本语言，默认 `zh`。 |
 | `ACTIVELINK_GROUP_ID_1` | 主动上下文和用户画像群白名单。 |
+| `ACTIVELINK_GROUP_IDS` / `PROACTIVE_CONTEXT_GROUPS` | 额外群白名单，支持逗号或空格分隔。 |
 | `ACTIVELINK_PRIVATE_ID_1` / `ACTIVELINK_PRIVATE_ID_2` | ActiveLink 私聊配置。 |
 | `ACTIVELINK_PRIVATE_IDS` | 允许记录用户画像的私聊用户 ID。 |
-| `PROACTIVE_CONTEXT_GROUPS` | 额外主动上下文群 ID 列表。 |
 | `PROACTIVE_CONTEXT_LIMIT` | 群聊历史保留数量。 |
 | `PROACTIVE_COOLDOWN_SECONDS` | 主动回复冷却时间。 |
 | `PROACTIVE_TRIGGER_MESSAGES` | 主动回复触发消息数量。 |
-| `VISION_MAX_IMAGES` | 单次最多分析图片数，默认 `2`。 |
-| `VISION_TIMEOUT_MS` | 视觉请求超时，默认 `45000` 毫秒。 |
+| `PROACTIVE_INITIAL_PROBABILITY` | 主动发言初始概率。 |
+| `PROACTIVE_CHECK_INTERVAL_SECONDS` | 主动发言轮询间隔。 |
+| `PROACTIVE_INITIAL_DELAY_SECONDS` | 启动后首次检查延迟。 |
+| `API_TIMEOUT_MS` / `API_RETRY_COUNT` / `API_RETRY_DELAY_MS` | 外部 API 的通用超时、重试次数和退避间隔。 |
+| `RAG_*` | 本地知识库向量维度、阈值、分块、缓存和候选筛选参数。 |
+| `SPLIT_*` | 消息自然分段的长度阈值和发送延迟。 |
+| `REMINDER_*` | 提醒轮询间隔和提醒发送后的上下文保留时间。 |
 
-`.env.example` 提供基础模板；新增功能使用的可选变量请按上表补充。
+`.env.example` 是当前代码读取的完整环境变量模板，包含模型、API 地址、超时、重试、RAG、主动上下文、视觉、TTS 和消息分段参数。新增变量应先进入 `external/arcueid-system/config.js`，再同步到 `.env.example` 和本节说明。
 
 ## 使用方式
 
@@ -185,6 +203,8 @@ node external/arcueid-system/migrate-vectors.js
 ├── MAINTENANCE.md                   # 运维说明
 └── external/arcueid-system/
     ├── index.js                     # 本地表情替换
+    ├── config.js                    # 环境变量和默认行为集中配置
+    ├── http-client.js               # 外部 API 超时、重试和错误摘要
     ├── env-perception.js            # 时间和天气上下文
     ├── arcueid-hearing.js           # 语音转写
     ├── audio.js                     # TTS 输出
@@ -210,6 +230,8 @@ node external/arcueid-system/migrate-vectors.js
 - 定期备份数据库、知识库和向量索引。
 - 主动群聊和用户画像只应对明确授权的群或用户启用。
 - 图片、语音、搜索和对话可能会发送到已配置的第三方 API。
+- 外部 API 调用统一走可配置超时与重试；如果服务限流或密钥失效，日志只记录摘要，不输出完整密钥。
+- 本地 RAG 在向量 KNN 前会先用轻量词项索引筛选候选块；知识库规模继续扩大时，再考虑接入 HNSW、SQLite 扩展或专用向量库。
 
 ## 开发与验证
 
@@ -230,11 +252,9 @@ done
 
 - [ ] 确认 `.env`、日志、数据库、向量文件和私有素材未被提交。
 - [ ] 补充 OneBot 实际连接参数并保护 Koishi 控制台端口。
-- [ ] 添加与项目声明一致的 `LICENSE` 文件。
-- [ ] 将 `package.json` 中的脚手架名称 `@koishijs/boilerplate` 改为正式项目名称。
-- [ ] 如需发布 npm，将 `private` 从 `true` 改为 `false`。
+- [ ] 如需发布 npm，将 `package.json` 的 `private` 从 `true` 改为 `false` 并制定发布策略。
 - [ ] 向群成员告知第三方 API、语音转写、图片理解和用户画像的数据处理方式。
 
 ## 许可证
 
-项目元数据声明使用 `AGPL-3.0`。公开发布前，请在仓库根目录添加对应的 `LICENSE` 文件，并确认第三方依赖、模型、语音素材和图片服务符合各自的许可证与服务条款。
+本项目使用 `AGPL-3.0-only`，完整文本见仓库根目录 `LICENSE`。请同时确认第三方依赖、模型、语音素材和图片服务符合各自的许可证与服务条款。

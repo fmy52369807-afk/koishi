@@ -1,4 +1,6 @@
 const { buildReplyStyleInstruction } = require('./reply-style')
+const { config } = require('./config')
+const { errorSummary, requestWithRetry } = require('./http-client')
 
 module.exports.name = 'arcueid-guess-character'
 
@@ -229,14 +231,14 @@ function evaluateQuestion(state, text) {
 
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('人物猜谜')
-  const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY
-  const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
-  const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions'
+  const DEEPSEEK_KEY = config.deepseek.apiKey
+  const DEEPSEEK_MODEL = config.deepseek.model
+  const DEEPSEEK_URL = config.deepseek.chatUrl
 
   async function judgeWithAi(state, question) {
     if (!DEEPSEEK_KEY) return null
     try {
-      const res = await ctx.http.post(DEEPSEEK_URL, {
+      const res = await requestWithRetry(ctx, 'post', DEEPSEEK_URL, {
         model: DEEPSEEK_MODEL,
         messages: [
           {
@@ -252,6 +254,10 @@ module.exports.apply = (ctx) => {
         temperature: 0
       }, {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
+      }, {
+        timeout: config.deepseek.timeoutMs,
+        retries: config.http.retries,
+        retryDelayMs: config.http.retryDelayMs,
       })
       const text = res?.choices?.[0]?.message?.content?.trim() || ''
       const match = text.match(/\{[\s\S]*\}/)
@@ -259,7 +265,7 @@ module.exports.apply = (ctx) => {
       const parsed = JSON.parse(match[0])
       if (['yes', 'no', 'unknown', 'guess'].includes(parsed.verdict)) return parsed.verdict
     } catch (err) {
-      logger.warn('AI 判定失败，使用本地兜底：%s', err.message)
+      logger.warn('AI 判定失败，使用本地兜底：%s', errorSummary(err))
     }
     return null
   }
@@ -267,7 +273,7 @@ module.exports.apply = (ctx) => {
   async function analyzeGameInput(state, content) {
     if (!DEEPSEEK_KEY) return fallbackIntent(content)
     try {
-      const res = await ctx.http.post(DEEPSEEK_URL, {
+      const res = await requestWithRetry(ctx, 'post', DEEPSEEK_URL, {
         model: DEEPSEEK_MODEL,
         messages: [
           {
@@ -290,6 +296,10 @@ module.exports.apply = (ctx) => {
         temperature: 0
       }, {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
+      }, {
+        timeout: config.deepseek.timeoutMs,
+        retries: config.http.retries,
+        retryDelayMs: config.http.retryDelayMs,
       })
       const text = res?.choices?.[0]?.message?.content?.trim() || ''
       const match = text.match(/\{[\s\S]*\}/)
@@ -301,7 +311,7 @@ module.exports.apply = (ctx) => {
       }
       return { intent: parsed.intent, verdict: parsed.verdict || null }
     } catch (err) {
-      logger.warn('AI 意图识别失败，使用本地兜底：%s', err.message)
+      logger.warn('AI 意图识别失败，使用本地兜底：%s', errorSummary(err))
       return fallbackIntent(content)
     }
   }

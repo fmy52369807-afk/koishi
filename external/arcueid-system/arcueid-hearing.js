@@ -1,4 +1,6 @@
 const { h } = require('koishi')
+const { config } = require('./config')
+const { errorSummary, requestWithRetry } = require('./http-client')
 
 module.exports.name = 'arcueid-hearing'
 
@@ -6,7 +8,7 @@ module.exports.apply = (ctx) => {
   const logger = ctx.logger('听觉神经')
 
   // 🔮 记得填入你的 API Key！
-  const ASR_API_KEY = process.env.SILICONFLOW_API_KEY
+  const ASR_API_KEY = config.siliconFlow.apiKey
 
   if (!ASR_API_KEY) {
     logger.warn('SILICONFLOW_API_KEY 未配置，语音转写功能将不可用。')
@@ -30,7 +32,7 @@ module.exports.apply = (ctx) => {
 
     if (audioMatch && audioMatch[1]) {
       const audioUrl = audioMatch[1].replace(/&amp;/g, '&')
-      logger.info(`【听觉感知】准备下载语音，真实地址: ${audioUrl}`)
+      logger.info('【听觉感知】检测到语音消息，准备转写。')
 
       if (!ASR_API_KEY) {
         if (isReply) {
@@ -42,7 +44,11 @@ module.exports.apply = (ctx) => {
       }
 
       try {
-        const audioBuffer = await ctx.http.get(audioUrl, { responseType: 'arraybuffer' })
+        const audioBuffer = await requestWithRetry(ctx, 'get', audioUrl, null, { responseType: 'arraybuffer' }, {
+          timeout: config.siliconFlow.timeoutMs,
+          retries: config.http.retries,
+          retryDelayMs: config.http.retryDelayMs,
+        })
         
         if (audioBuffer.byteLength === 0) {
           throw new Error('下载到的语音文件是空的！')
@@ -51,12 +57,16 @@ module.exports.apply = (ctx) => {
         const form = new FormData()
         const blob = new Blob([audioBuffer], { type: 'audio/wav' })
         form.append('file', blob, 'voice.wav')
-        form.append('model', 'FunAudioLLM/SenseVoiceSmall')
+        form.append('model', config.siliconFlow.asrModel)
 
-        const response = await ctx.http.post('https://api.siliconflow.cn/v1/audio/transcriptions', form, {
+        const response = await requestWithRetry(ctx, 'post', config.siliconFlow.asrUrl, form, {
           headers: {
             'Authorization': `Bearer ${ASR_API_KEY}`
           }
+        }, {
+          timeout: config.siliconFlow.timeoutMs,
+          retries: config.http.retries,
+          retryDelayMs: config.http.retryDelayMs,
         })
 
         const text = response.text || ''
@@ -72,11 +82,7 @@ module.exports.apply = (ctx) => {
         }
 
       } catch (err) {
-        let errorDetail = err.message
-        if (err.response && err.response.data) {
-          errorDetail = typeof err.response.data === 'object' ? JSON.stringify(err.response.data) : err.response.data
-        }
-        logger.error(`【听觉受阻】底层拒绝原因: ${errorDetail}`)
+        logger.error(`【听觉受阻】底层拒绝原因: ${errorSummary(err)}`)
         
         if (isReply) {
           session.content += `\n[系统提示：志贵让你听一段语音，但你的听觉神经受到了干扰，没听清。]\n`

@@ -1,18 +1,100 @@
 const { h } = require('koishi')
 const fs = require('fs')
 const path = require('path')
+const { config } = require('./config')
+const { errorSummary, requestWithRetry } = require('./http-client')
 
 module.exports.name = 'arcueid-vector-rag'
 
 // ── Vector store (Float32Array-backed, pre-normalized) ──────────────
-const DIM = 1024   // BAAI/bge-m3
+const DIM = config.rag.dimension   // BAAI/bge-m3
 
 let numVectors = 0
 let vectors = null   // Float32Array, flat layout: [v0[0..1023], v1[0..1023], …]
 let texts = []        // parallel string array
+let termIndex = new Map()
 
 function storeSize() {
   return numVectors
+}
+
+const GENERIC_TERMS = new Set([
+  '这个', '那个', '什么', '怎么', '为什么', '如何', '是否', '是不是', '可以', '知道',
+  '介绍', '解释', '内容', '资料', '问题', '一下', '一些', '一个', '一种', '这里',
+  '那里', '我们', '你们', '他们', '她们', '以及', '因为', '所以', '但是', '不过',
+  '如果', '然后', '比较', '相关', '关于', '系统', '用户', '志贵',
+])
+
+function extractTerms(text, maxTerms = config.rag.termIndexMaxTermsPerText) {
+  const value = String(text || '').toLowerCase()
+  const terms = new Set()
+
+  for (const match of value.matchAll(/[a-z0-9][a-z0-9_.-]{1,31}/gi)) {
+    const token = match[0]
+    if (!/^\d+$/.test(token)) terms.add(token)
+    if (terms.size >= maxTerms) return [...terms]
+  }
+
+  const chineseChunks = value
+    .replace(/[^\u4e00-\u9fff]+/g, ' ')
+    .split(/\s+/)
+    .map(part => part.trim())
+    .filter(Boolean)
+
+  for (const chunk of chineseChunks) {
+    if (chunk.length >= 2 && chunk.length <= 12 && !GENERIC_TERMS.has(chunk)) {
+      terms.add(chunk)
+      if (terms.size >= maxTerms) return [...terms]
+    }
+
+    const maxGram = Math.min(4, chunk.length)
+    for (let n = 2; n <= maxGram; n++) {
+      for (let i = 0; i <= chunk.length - n; i++) {
+        const term = chunk.slice(i, i + n)
+        if (!GENERIC_TERMS.has(term)) terms.add(term)
+        if (terms.size >= maxTerms) return [...terms]
+      }
+    }
+  }
+
+  return [...terms]
+}
+
+function addTextToTermIndex(text, index) {
+  for (const term of extractTerms(text)) {
+    let bucket = termIndex.get(term)
+    if (!bucket) {
+      bucket = new Set()
+      termIndex.set(term, bucket)
+    }
+    bucket.add(index)
+  }
+}
+
+function rebuildTermIndex(logger) {
+  termIndex = new Map()
+  for (let i = 0; i < texts.length; i++) addTextToTermIndex(texts[i], i)
+  if (numVectors > 0) {
+    logger.info(`【索引就绪】已为 ${numVectors} 条记忆建立 ${termIndex.size} 个候选词项`)
+  }
+}
+
+function candidateIndices(query, maxCandidates) {
+  if (!maxCandidates || maxCandidates <= 0 || !termIndex.size) return null
+
+  const counts = new Map()
+  for (const term of extractTerms(query, 80)) {
+    const bucket = termIndex.get(term)
+    if (!bucket) continue
+    for (const idx of bucket) counts.set(idx, (counts.get(idx) || 0) + 1)
+  }
+
+  if (!counts.size) return null
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxCandidates)
+    .map(([idx]) => idx)
 }
 
 function saveStore(binPath, textsPath) {
@@ -76,10 +158,11 @@ function appendToStore(newVectors, newTexts, binPath, textsPath) {
   vectors = newStore
   texts.push(...newTexts)
   numVectors = newNum
+  newTexts.forEach((text, index) => addTextToTermIndex(text, oldNum + index))
   saveStore(binPath, textsPath)
 }
 
-function searchKnn(queryVec, k, threshold) {
+function searchKnn(queryVec, k, threshold, candidates = null) {
   // Normalize query vector once
   let qNorm = 0
   for (let i = 0; i < DIM; i++) qNorm += queryVec[i] * queryVec[i]
@@ -89,7 +172,12 @@ function searchKnn(queryVec, k, threshold) {
   // Top-k results, kept sorted descending (best first)
   const results = []
 
-  for (let i = 0; i < numVectors; i++) {
+  const iterable = Array.isArray(candidates) && candidates.length ? candidates : null
+  const length = iterable ? iterable.length : numVectors
+
+  for (let n = 0; n < length; n++) {
+    const i = iterable ? iterable[n] : n
+    if (i < 0 || i >= numVectors) continue
     const off = i * DIM
     let dot = 0
     for (let j = 0; j < DIM; j++) {
@@ -120,9 +208,9 @@ function searchKnn(queryVec, k, threshold) {
 
 module.exports.apply = (ctx) => {
   const logger = ctx.logger('阿卡夏之眼')
-  const API_KEY = process.env.SILICONFLOW_API_KEY
+  const API_KEY = config.siliconFlow.apiKey
   const queryCache = new Map()
-  const QUERY_CACHE_TTL = 10 * 60 * 1000
+  const QUERY_CACHE_TTL = config.rag.queryCacheTtlMs
   const RAG_PREFIX = '查记忆'
   const RAG_KEYWORDS = /谁|什么|怎么|为什么|为何|哪|如何|介绍|解释|总结|回忆|记得|知道|资料|书|内容|讲讲|说说|查|搜索|找/
 
@@ -138,12 +226,14 @@ module.exports.apply = (ctx) => {
   if (!fs.existsSync(libDir)) fs.mkdirSync(libDir, { recursive: true })
 
   loadStore(binPath, textsPath, jsonPath, logger)
+  rebuildTermIndex(logger)
 
   // ── chunking ──────────────────────────────────────────────────
-  function chunkText(text, size = 500, overlap = 100) {
+  function chunkText(text, size = config.rag.chunkSize, overlap = config.rag.chunkOverlap) {
     text = text.replace(/\s+/g, ' ')
     const chunks = []
-    for (let i = 0; i < text.length; i += (size - overlap)) {
+    const step = Math.max(1, size - overlap)
+    for (let i = 0; i < text.length; i += step) {
       chunks.push(text.slice(i, i + size))
     }
     return chunks
@@ -173,10 +263,14 @@ module.exports.apply = (ctx) => {
       return cached.vector
     }
 
-    const response = await ctx.http.post('https://api.siliconflow.cn/v1/embeddings', {
-      model: 'BAAI/bge-m3',
+    const response = await requestWithRetry(ctx, 'post', config.siliconFlow.embeddingUrl, {
+      model: config.siliconFlow.embeddingModel,
       input
-    }, { headers: { 'Authorization': `Bearer ${API_KEY}` } })
+    }, { headers: { 'Authorization': `Bearer ${API_KEY}` } }, {
+      timeout: config.siliconFlow.timeoutMs,
+      retries: config.http.retries,
+      retryDelayMs: config.http.retryDelayMs,
+    })
 
     const vector = response.data[0].embedding
     queryCache.set(cacheKey, { vector, ts: Date.now() })
@@ -271,28 +365,16 @@ module.exports.apply = (ctx) => {
         for (let i = startIndex; i < allChunks.length; i++) {
           const chunk = allChunks[i]
 
-          let success = false
-          let retryCount = 0
-
-          while (!success) {
-            try {
-              const response = await ctx.http.post('https://api.siliconflow.cn/v1/embeddings', {
-                model: 'BAAI/bge-m3',
-                input: chunk
-              }, { headers: { 'Authorization': `Bearer ${API_KEY}` } })
-              batchVectors.push(response.data[0].embedding)
-              batchTexts.push(chunk)
-              success = true
-            } catch (error) {
-              retryCount++
-              if (error.response && error.response.status >= 500) {
-                logger.warn(`【API 拥堵】遇到服务器过载，休眠 20 秒后进行第 ${retryCount} 次重试...`)
-                await sleep(20000)
-              } else {
-                throw error
-              }
-            }
-          }
+          const response = await requestWithRetry(ctx, 'post', config.siliconFlow.embeddingUrl, {
+            model: config.siliconFlow.embeddingModel,
+            input: chunk
+          }, { headers: { 'Authorization': `Bearer ${API_KEY}` } }, {
+            timeout: config.siliconFlow.timeoutMs,
+            retries: Math.max(config.http.retries, 3),
+            retryDelayMs: Math.max(config.http.retryDelayMs, 2000),
+          })
+          batchVectors.push(response.data[0].embedding)
+          batchTexts.push(chunk)
 
           if (i % 20 === 0) logger.info(`【吞噬进度】已向量化 ${i}/${allChunks.length} ...`)
 
@@ -313,7 +395,7 @@ module.exports.apply = (ctx) => {
         logger.info(`【吞噬完成】总计 ${storeSize()} 条记忆已存入向量索引`)
         return `【吞噬完成】呼~ 志贵！大图书馆里所有的书我都背下来啦！（共录入 ${allChunks.length} 条绝对记忆）`
       } catch (err) {
-        logger.error('吃书失败:', err)
+        logger.error(`吃书失败: ${errorSummary(err)}`)
         if (batchVectors.length > 0) {
           appendToStore(batchVectors, batchTexts, binPath, textsPath)
         }
@@ -338,7 +420,11 @@ module.exports.apply = (ctx) => {
 
     try {
       const queryVector = await embedText(queryText)
-      const topMatches = searchKnn(queryVector, 3, 0.5)
+      const candidates = candidateIndices(queryText, config.rag.maxCandidates)
+      const topMatches = searchKnn(queryVector, config.rag.topK, config.rag.threshold, candidates)
+      if (candidates?.length) {
+        logger.debug(`【候选裁剪】${candidates.length}/${storeSize()} 条记忆进入向量精排`)
+      }
 
       if (topMatches.length > 0) {
         let injectedContext = '\n\n[系统暗门/阿卡夏记忆：志贵的话语触发了以下潜意识回忆：]\n'
@@ -349,7 +435,7 @@ module.exports.apply = (ctx) => {
         logger.info(`【共鸣】触发深层记忆，最高匹配度：${topMatches[0].score.toFixed(2)}`)
       }
     } catch (err) {
-      logger.error('【记忆读取失败】', err.message)
+      logger.error(`【记忆读取失败】${errorSummary(err)}`)
     }
 
     return next()

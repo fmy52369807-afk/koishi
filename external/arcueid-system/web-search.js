@@ -1,4 +1,6 @@
 const { buildReplyStyleInstruction } = require('./reply-style');
+const { config } = require('./config');
+const { errorSummary, requestWithRetry } = require('./http-client');
 
 module.exports = {
   name: 'web-search',
@@ -6,10 +8,10 @@ module.exports = {
   apply(ctx) {
     const logger = ctx.logger('搜索引擎');
 
-    const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-    const TAVILY_URL = 'https://api.tavily.com/search';
-    const CACHE_TTL = 7200000;
-    const COOLDOWN_MS = 30000;
+    const TAVILY_API_KEY = config.tavily.apiKey;
+    const TAVILY_URL = config.tavily.url;
+    const CACHE_TTL = config.tavily.cacheTtlMs;
+    const COOLDOWN_MS = config.tavily.cooldownMs;
 
     const cache = new Map();
     const cooldowns = new Map();
@@ -60,14 +62,18 @@ module.exports = {
         res = cached.result;
       } else {
         try {
-          res = await ctx.http.post(TAVILY_URL, {
+          res = await requestWithRetry(ctx, 'post', TAVILY_URL, {
             api_key: TAVILY_API_KEY,
             query,
             search_depth: 'basic',
             include_answer: true,
-            max_results: 5,
+            max_results: config.tavily.maxResults,
           }, {
             headers: { 'Content-Type': 'application/json' }
+          }, {
+            timeout: config.tavily.timeoutMs,
+            retries: config.http.retries,
+            retryDelayMs: config.http.retryDelayMs,
           });
 
           if (uid) cooldowns.set(uid, Date.now());
@@ -75,8 +81,9 @@ module.exports = {
           logger.info(`【搜索成功】"${query}" — ${res.results?.length || 0} 条结果`);
 
         } catch (err) {
-          logger.error('【搜索失败】', err.message);
-          session.send(`搜索失败：${err.message}`);
+          const detail = errorSummary(err);
+          logger.error(`【搜索失败】${detail}`);
+          session.send(`搜索失败：${detail}`);
           return; // 阻止 ChatLuna 也回复
         }
       }

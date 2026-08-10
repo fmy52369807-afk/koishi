@@ -1,5 +1,7 @@
 // 自然语言定时提醒 — SQLite 持久化
 const { buildReplyStyleInstruction, sanitizeReply } = require('./reply-style');
+const { config } = require('./config');
+const { errorSummary, requestWithRetry } = require('./http-client');
 
 module.exports.name = 'arcueid-reminder';
 module.exports.using = ['database'];
@@ -26,9 +28,9 @@ module.exports.apply = (ctx) => {
   }, { autoInc: true });
 
   // ── AI 生成提醒消息 ──────────────────────────────
-  const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
-  const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
-  const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions';
+  const DEEPSEEK_KEY = config.deepseek.apiKey;
+  const DEEPSEEK_MODEL = config.deepseek.model;
+  const DEEPSEEK_URL = config.deepseek.chatUrl;
 
   if (!DEEPSEEK_KEY) {
     logger.warn('DEEPSEEK_API_KEY 未配置，提醒将使用兜底文案。');
@@ -37,7 +39,7 @@ module.exports.apply = (ctx) => {
   async function generateReminderMsg(userMessage) {
     try {
       if (!DEEPSEEK_KEY) return `志贵，${userMessage}！`;
-      const res = await ctx.http.post(DEEPSEEK_URL, {
+      const res = await requestWithRetry(ctx, 'post', DEEPSEEK_URL, {
         model: DEEPSEEK_MODEL,
         messages: [
           { role: 'system', content: '你是爱尔奎特，真祖的公主。志贵是你的远野志贵。现在到了志贵设定的提醒时间。用你的口吻自然提醒他，一两句话就好，不要用表情符号，像真人在聊天一样。' },
@@ -47,10 +49,14 @@ module.exports.apply = (ctx) => {
         max_tokens: 80, temperature: 0.9,
       }, {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${DEEPSEEK_KEY}` }
+      }, {
+        timeout: config.deepseek.timeoutMs,
+        retries: config.http.retries,
+        retryDelayMs: config.http.retryDelayMs,
       });
       return sanitizeReply(res?.choices?.[0]?.message?.content, { maxChars: 45 }) || `志贵，${userMessage}的时间到啦~`;
     } catch (e) {
-      logger.warn('【AI提醒生成失败】', e.message);
+      logger.warn(`【AI提醒生成失败】${errorSummary(e)}`);
       return `志贵，${userMessage}！`;
     }
   }
@@ -329,7 +335,7 @@ module.exports.apply = (ctx) => {
   // ── 触发检查（每分钟） ──────────────────────────
   let checking = false;
   const recentDeliveredReminders = new Map();
-  const REMINDER_CONTEXT_TTL = 15 * 60 * 1000;
+  const REMINDER_CONTEXT_TTL = config.reminder.contextTtlMs;
 
   function reminderContextKey(platform, channelId, uid) {
     return [platform || '', channelId || '', uid || ''].join(':');
@@ -437,7 +443,7 @@ module.exports.apply = (ctx) => {
 
   ctx.on('ready', () => {
     checkAndFire();
-    ctx.setInterval(checkAndFire, 60000);
+    ctx.setInterval(checkAndFire, config.reminder.checkIntervalMs);
   });
 
   // ── 兜底：防止 LLM 幻觉出 [定时:...] ──────────────
