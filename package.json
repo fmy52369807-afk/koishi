@@ -1,6 +1,6 @@
 {
   "name": "arcueid-koishi-assistant",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "description": "A Koishi-based QQ assistant with Arcueid persona, reminders, search, vision, voice, RAG, and proactive group chat context.",
   "packageManager": "yarn@4.12.0",
   "private": true,

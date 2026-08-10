@@ -2,6 +2,12 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Releases are tagged as `vMAJOR.MINOR.PATCH`; unreleased branch work stays under `Unreleased` until it is merged and published.
 
+## [1.17.1] - 2026-08-10
+
+### Fixed
+
+- Increased the CI job budget to 30 minutes so a cold, immutable dependency install can finish before verification begins.
+
 ## [1.17.0] - 2026-08-10
 
 ### Added
