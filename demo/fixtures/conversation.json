@@ -1,0 +1,27 @@
+{
+  "disclaimer": "Synthetic demonstration data. All names, IDs, times, messages, and sources are fictional.",
+  "turns": [
+    {
+      "input": "查记忆：这个项目如何避免长回复刷屏？",
+      "context": {
+        "rag": ["出站消息会优先保留 2 至 3 条短句，并把其他换行内容按阈值合并后分段发送。"],
+        "profile": "匿名用户：偏好简短、直接的说明。"
+      },
+      "output": "会先保留自然的短句连发；真的太长才合并、分段，再隔一小会儿发出去。"
+    },
+    {
+      "input": "搜索 Koishi 的插件机制",
+      "context": {
+        "webSearch": ["匿名搜索结果 1", "匿名搜索结果 2"]
+      },
+      "output": "我把搜索到的要点整理好了：插件通过 Context 注册服务、中间件和事件监听器。"
+    },
+    {
+      "input": "[图片] 这张架构图里有哪些模块？",
+      "context": {
+        "vision": "图片包含 OneBot、Koishi、中间件、ChatLuna、SQLite 和外部 API 模块。"
+      },
+      "output": "从图上看，核心是 OneBot 接入、Koishi 插件流水线、ChatLuna 对话层，以及 SQLite 和外部模型服务。"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 const { config } = require('./external/arcueid-system/config');
+const { mergeLines, preserveShortBurst, shouldSkipNaturalSplit, splitNaturalChat } = require('./external/arcueid-system/split-utils');
 
 module.exports = {
   name: 'auto-split-message',
@@ -8,53 +9,6 @@ module.exports = {
 
     function sleep(ms) {
       return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
-    function shouldSkipNaturalSplit(content) {
-      return !content
-        || content.includes('\u200B')
-        || content.includes('[norender]')
-        || content.includes('[语音]')
-        || /data:image\/[a-z0-9.+-]+;base64,/i.test(content)
-        || /base64:\/\//i.test(content)
-        || /^file:\/\//i.test(content)
-        || /https?:\/\//i.test(content)
-        || /<[^>]+>/.test(content)
-        || /```|^\s*(?:[-*]|\d+[.)、])/m.test(content);
-    }
-
-    function attachLooseExpression(parts) {
-      const result = [];
-      for (const part of parts) {
-        if (/^\s*[\[【]表情[:：][^\]】]+[\]】]\s*$/.test(part) && result.length) {
-          result[result.length - 1] += part.trim();
-        } else {
-          result.push(part);
-        }
-      }
-      return result;
-    }
-
-    function splitNaturalChat(content) {
-      const value = String(content || '').replace(/\s+/g, ' ').trim();
-      if (value.length < config.split.naturalMinChars || value.length > config.split.naturalMaxChars) return [];
-
-      let parts = value.match(/[^。！？!?；;]+[。！？!?；;]?/g) || [];
-      parts = attachLooseExpression(parts.map(part => part.trim()).filter(Boolean));
-
-      if (parts.length === 1 && /[，,、]/.test(parts[0])) {
-        const chunk = parts[0];
-        const index = Math.max(chunk.lastIndexOf('，'), chunk.lastIndexOf(','), chunk.lastIndexOf('、'));
-        const left = chunk.slice(0, index).trim();
-        const right = chunk.slice(index + 1).trim();
-        if (left.length >= 6 && right.length >= 6 && left.length <= config.split.naturalPartMaxChars && right.length <= config.split.naturalPartMaxChars) {
-          parts = [left, right];
-        }
-      }
-
-      if (parts.length < 2 || parts.length > 3) return [];
-      if (parts.some(part => part.length < 2 || part.length > config.split.naturalPartMaxChars)) return [];
-      return parts;
     }
 
     async function sendLines(session, lines, delayMs) {
@@ -85,7 +39,7 @@ module.exports = {
       // 1. 如果没有换行符，说明是单句，直接放行
       if (!session.content.includes('\n')) {
         if (!shouldSkipNaturalSplit(session.content)) {
-          const naturalLines = splitNaturalChat(session.content);
+          const naturalLines = splitNaturalChat(session.content, config.split);
           if (naturalLines.length > 1) {
             logger.info(`自然短句拆分发送：条数=${naturalLines.length}`);
             const sent = await sendLines(session, naturalLines, config.split.naturalDelayMs);
@@ -100,12 +54,7 @@ module.exports = {
 
       // 如果模型本来就给了 2-3 条很短的自然短句，保留这种“连发”的口吻。
       // 更长或更多的内容才继续合并，避免长篇被刷屏式拆开。
-      const preserveShortBurst = rawLines.length >= 2
-        && rawLines.length <= 3
-        && rawLines.every(line => line.trim().length <= 30)
-        && !rawLines.some(line => /^\s*(?:[-*]|\d+[.)、]|[一二三四五六七八九十]+[、.])/.test(line));
-
-      if (preserveShortBurst) {
+      if (preserveShortBurst(rawLines)) {
         logger.info(`保留短句连发：条数=${rawLines.length}`);
         const sent = await sendLines(session, rawLines, config.split.naturalDelayMs);
         if (sent) return true;
@@ -115,21 +64,7 @@ module.exports = {
       // ==========================================
       // 🧠 核心升级：智能缝合短句，防止刷屏！
       // ==========================================
-      const lines = [];
-      let currentChunk = '';
-
-      for (const line of rawLines) {
-        // 设定合并阈值：如果当前拼接的内容加上新句子超过 40 个字，就断开，新起一条消息
-        if (currentChunk.length + line.length > config.split.mergeMaxChars) {
-          if (currentChunk) lines.push(currentChunk.trim());
-          currentChunk = line;
-        } else {
-          // 如果还不满 40 个字，就把零碎的短句拼在一起（用换行符连着，保证排版好看）
-          currentChunk = currentChunk ? currentChunk + ' ' + line : line;
-        }
-      }
-      // 把最后剩下的一块也塞进发送队列
-      if (currentChunk) lines.push(currentChunk.trim()); 
+      const lines = mergeLines(rawLines, config.split.mergeMaxChars);
 
       // 3. 只有当合并后确实有多条消息时，才执行分段发送
       if (lines.length > 1) {

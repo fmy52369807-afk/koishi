@@ -1,0 +1,7 @@
+{
+  "disclaimer": "Synthetic architecture fixture for public presentation.",
+  "inbound": ["arcueid-hearing", "vision", "env-perception", "arcueid-vector-rag", "web-search", "reminder"],
+  "state": ["personal-assistant", "user-profile", "proactive-context", "guess-character"],
+  "ai": ["chatluna", "chatluna-openai-like-adapter"],
+  "outbound": ["reply-style", "arcueid-custom-tts", "arcueid-local-meme", "auto-split-message"]
+}

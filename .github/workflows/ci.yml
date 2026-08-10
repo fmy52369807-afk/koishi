@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: yarn install --immutable
+      - name: Audit public tree
+        run: yarn audit:public
+      - name: Check syntax
+        run: yarn check
+      - name: Run tests
+        run: yarn test
+      - name: Run anonymized benchmark
+        run: yarn benchmark

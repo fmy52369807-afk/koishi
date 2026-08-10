@@ -3,6 +3,7 @@ const fs = require('fs')
 const path = require('path')
 const { config } = require('./config')
 const { errorSummary, requestWithRetry } = require('./http-client')
+const { addTextToTermIndex, buildTermIndex, candidateIndices: selectCandidates } = require('./rag-utils')
 
 module.exports.name = 'arcueid-vector-rag'
 
@@ -18,83 +19,15 @@ function storeSize() {
   return numVectors
 }
 
-const GENERIC_TERMS = new Set([
-  '这个', '那个', '什么', '怎么', '为什么', '如何', '是否', '是不是', '可以', '知道',
-  '介绍', '解释', '内容', '资料', '问题', '一下', '一些', '一个', '一种', '这里',
-  '那里', '我们', '你们', '他们', '她们', '以及', '因为', '所以', '但是', '不过',
-  '如果', '然后', '比较', '相关', '关于', '系统', '用户', '志贵',
-])
-
-function extractTerms(text, maxTerms = config.rag.termIndexMaxTermsPerText) {
-  const value = String(text || '').toLowerCase()
-  const terms = new Set()
-
-  for (const match of value.matchAll(/[a-z0-9][a-z0-9_.-]{1,31}/gi)) {
-    const token = match[0]
-    if (!/^\d+$/.test(token)) terms.add(token)
-    if (terms.size >= maxTerms) return [...terms]
-  }
-
-  const chineseChunks = value
-    .replace(/[^\u4e00-\u9fff]+/g, ' ')
-    .split(/\s+/)
-    .map(part => part.trim())
-    .filter(Boolean)
-
-  for (const chunk of chineseChunks) {
-    if (chunk.length >= 2 && chunk.length <= 12 && !GENERIC_TERMS.has(chunk)) {
-      terms.add(chunk)
-      if (terms.size >= maxTerms) return [...terms]
-    }
-
-    const maxGram = Math.min(4, chunk.length)
-    for (let n = 2; n <= maxGram; n++) {
-      for (let i = 0; i <= chunk.length - n; i++) {
-        const term = chunk.slice(i, i + n)
-        if (!GENERIC_TERMS.has(term)) terms.add(term)
-        if (terms.size >= maxTerms) return [...terms]
-      }
-    }
-  }
-
-  return [...terms]
-}
-
-function addTextToTermIndex(text, index) {
-  for (const term of extractTerms(text)) {
-    let bucket = termIndex.get(term)
-    if (!bucket) {
-      bucket = new Set()
-      termIndex.set(term, bucket)
-    }
-    bucket.add(index)
-  }
-}
-
 function rebuildTermIndex(logger) {
-  termIndex = new Map()
-  for (let i = 0; i < texts.length; i++) addTextToTermIndex(texts[i], i)
+  termIndex = buildTermIndex(texts, config.rag.termIndexMaxTermsPerText)
   if (numVectors > 0) {
     logger.info(`【索引就绪】已为 ${numVectors} 条记忆建立 ${termIndex.size} 个候选词项`)
   }
 }
 
 function candidateIndices(query, maxCandidates) {
-  if (!maxCandidates || maxCandidates <= 0 || !termIndex.size) return null
-
-  const counts = new Map()
-  for (const term of extractTerms(query, 80)) {
-    const bucket = termIndex.get(term)
-    if (!bucket) continue
-    for (const idx of bucket) counts.set(idx, (counts.get(idx) || 0) + 1)
-  }
-
-  if (!counts.size) return null
-
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, maxCandidates)
-    .map(([idx]) => idx)
+  return selectCandidates(query, termIndex, maxCandidates)
 }
 
 function saveStore(binPath, textsPath) {
@@ -158,7 +91,9 @@ function appendToStore(newVectors, newTexts, binPath, textsPath) {
   vectors = newStore
   texts.push(...newTexts)
   numVectors = newNum
-  newTexts.forEach((text, index) => addTextToTermIndex(text, oldNum + index))
+  newTexts.forEach((text, index) => {
+    addTextToTermIndex(text, oldNum + index, termIndex, config.rag.termIndexMaxTermsPerText)
+  })
   saveStore(binPath, textsPath)
 }
 

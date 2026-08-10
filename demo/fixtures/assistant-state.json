@@ -1,0 +1,27 @@
+{
+  "disclaimer": "Synthetic demonstration data. It is not exported from a production database.",
+  "reminders": [
+    {
+      "id": 1,
+      "scope": "demo-user/demo-channel",
+      "schedule": "daily 09:00 Asia/Shanghai",
+      "message": "复习项目架构图",
+      "enabled": true
+    }
+  ],
+  "todos": [
+    {
+      "id": 1,
+      "content": "补充 CI 测试结果",
+      "done": false
+    }
+  ],
+  "memories": [
+    {
+      "id": 1,
+      "tags": ["展示偏好"],
+      "content": "演示时优先展示匿名夹具和可复现命令。",
+      "enabled": true
+    }
+  ]
+}
