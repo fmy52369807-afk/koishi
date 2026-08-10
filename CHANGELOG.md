@@ -2,6 +2,12 @@
 
 This project follows [Semantic Versioning](https://semver.org/). Releases are tagged as `vMAJOR.MINOR.PATCH`; unreleased branch work stays under `Unreleased` until it is merged and published.
 
+## [1.17.2] - 2026-08-10
+
+### Fixed
+
+- Synchronized the Yarn 4 lockfile workspace entry so CI's immutable install is reproducible.
+
 ## [1.17.1] - 2026-08-10
 
 ### Fixed
